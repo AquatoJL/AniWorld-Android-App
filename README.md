@@ -7,7 +7,7 @@ Instructions for adding this repo:
   <ul>
     <li>Go to Kodi file manager.</li>
     <li>Click on "Add Source"</li>
-	<li>The address for the source is <code>https://aquato1jl.github.io/</code>(Pray the name of "JORDAN Repo")</li>
+	<li>The address for the source is <code>https://aquatojl.github.io/</code>(Pray the name of "JORDAN Repo")</li>
 	<li>Go to "Addons"</li>
 	<li>In Addons, install from a zip file. When asking for the location, select "JORDAN Repo", and install 
 	<a href="repository.jordan-1.0.zip">repository.jordan-1.0.zip</a>.</li>
