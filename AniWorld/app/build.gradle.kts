@@ -10,8 +10,8 @@ android {
 
     defaultConfig {
         applicationId = "com.example.aniworld"
-        minSdk = 35
-        targetSdk = 37
+        minSdk = 30
+        targetSdk = 30
         versionCode = 1
         versionName = "1.0"
 
