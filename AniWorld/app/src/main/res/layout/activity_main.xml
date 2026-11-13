@@ -1,0 +1,131 @@
+
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background">
+
+    <LinearLayout
+        android:id="@+id/mainContent"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="34dp"
+        android:paddingEnd="34dp"
+        android:paddingTop="24dp"
+        android:paddingBottom="20dp">
+
+        <ScrollView
+            android:id="@+id/catalogScroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:scrollbars="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- Logo -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ANI"
+                        android:textColor="@color/accent"
+                        android:textStyle="bold"
+                        android:textSize="30sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="WORLD"
+                        android:textColor="@color/text_primary"
+                        android:textStyle="bold"
+                        android:textSize="30sp" />
+
+                    <TextView
+                        android:id="@+id/status"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:text="BY JORDAN"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.14" />
+                </LinearLayout>
+
+                <!-- Navigation -->
+                <LinearLayout
+                    android:id="@+id/navigation"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="20dp"
+                    android:layout_marginBottom="18dp" />
+
+                <!-- Suche -->
+                <EditText
+                    android:id="@+id/search"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:hint="Serie suchen …"
+                    android:singleLine="true"
+                    android:imeOptions="actionSearch"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:background="@drawable/search_bg" />
+
+                <!-- Überschrift -->
+                <TextView
+                    android:id="@+id/sectionTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Entdecken"
+                    android:textColor="@color/text_primary"
+                    android:textSize="22sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="22dp"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Anime / Staffeln / Episoden -->
+                <LinearLayout
+                    android:id="@+id/catalog"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Footer -->
+                <TextView
+                    android:id="@+id/footer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Mit der Fernbedienung navigieren · Zurück führt eine Ebene zurück"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp"
+                    android:layout_marginTop="8dp" />
+
+            </LinearLayout>
+        </ScrollView>
+
+    </LinearLayout>
+
+    <!-- Player -->
+    <WebView
+        android:id="@+id/playerWeb"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
+</FrameLayout>
