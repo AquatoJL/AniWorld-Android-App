@@ -17,6 +17,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -41,6 +42,9 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import java.util.HashMap;
 import java.util.Map;
+import android.webkit.JavascriptInterface;
+import android.os.Handler;
+import android.os.Looper;
 
 public class MainActivity extends AppCompatActivity {
     private static final String BASE = "https://aniworld.to";
@@ -49,6 +53,9 @@ public class MainActivity extends AppCompatActivity {
     private TextView sectionTitle;
     private EditText search;
     private WebView player;
+    private View customView;
+    private WebChromeClient.CustomViewCallback customViewCallback;
+    private PlayerWebChromeClient playerChromeClient;
     private ScrollView catalogScroll;
     private final List<Show> currentShows = new ArrayList<>();
     private String currentUrl = BASE + "/animes";
@@ -57,12 +64,27 @@ public class MainActivity extends AppCompatActivity {
     private int level = 0;
     private Show selectedAnime;
     private Show selectedSeason;
+    private String currentEpisodeId = null;
+    private boolean currentEpisodeMarked = false;
+    private final Handler watchHandler = new Handler(Looper.getMainLooper());
+    private Runnable watchEpisodeRunnable;
 
     private LinearLayout mainContent;
 
     private static class Show {
         String title, url;
         Show(String t, String u) { title=t; url=u; }
+    }
+
+    private static class StreamHoster extends Show {
+        String language;
+        int languagePriority;
+
+        StreamHoster(String title, String url, String language, int languagePriority) {
+            super(title, url);
+            this.language = language;
+            this.languagePriority = languagePriority;
+        }
     }
 
     @Override public void onCreate(Bundle state) {
@@ -77,6 +99,12 @@ public class MainActivity extends AppCompatActivity {
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
+
+                        // Zuerst echtes Video-Vollbild schließen.
+                        if (customView != null && playerChromeClient != null) {
+                            playerChromeClient.onHideCustomView();
+                            return;
+                        }
 
                         // Player schließen und zur Hoster-Auswahl
                         if (player.getVisibility() == View.VISIBLE) {
@@ -129,7 +157,8 @@ public class MainActivity extends AppCompatActivity {
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(player, true);
-        player.setWebChromeClient(new WebChromeClient());
+        playerChromeClient = new PlayerWebChromeClient();
+        player.setWebChromeClient(playerChromeClient);
         player.setWebViewClient(new WebViewClient() {
 
             @Override
@@ -201,6 +230,48 @@ public class MainActivity extends AppCompatActivity {
                                 "})();",
                         null
                 );
+
+                // Doppeldruck auf OK/Enter der Fire-TV-Fernbedienung aktiviert
+                // den echten HTML5-Vollbildmodus. Der Aufruf erfolgt innerhalb
+                // eines echten DOM-Keydown-Events, damit die Browser-Geste gilt.
+                view.evaluateJavascript(
+                        "(function() {" +
+                                "  function installFullscreenKeys(doc) {" +
+                                "    if (!doc || doc.__aniworldFullscreenKeys) return;" +
+                                "    doc.__aniworldFullscreenKeys = true;" +
+                                "    var lastPress = 0;" +
+                                "    doc.addEventListener('keydown', function(e) {" +
+                                "      var key = e.key || '';" +
+                                "      var isSelect = key === 'Enter' || key === ' ' || key === 'Spacebar' || e.keyCode === 13 || e.keyCode === 32;" +
+                                "      if (!isSelect || e.repeat) return;" +
+                                "      var now = Date.now();" +
+                                "      if (now - lastPress > 500) { lastPress = now; return; }" +
+                                "      lastPress = 0;" +
+                                "      var d = doc;" +
+                                "      if (d.fullscreenElement || d.webkitFullscreenElement) return;" +
+                                "      var selectors = 'button[aria-label*=fullscreen i],button[title*=fullscreen i],button[aria-label*=vollbild i],button[title*=vollbild i],.vjs-fullscreen-control,.jw-icon-fullscreen,.plyr__control[data-plyr=fullscreen],.fp-fullscreen,[data-testid*=fullscreen]';" +
+                                "      var fsButton = d.querySelector(selectors);" +
+                                "      if (fsButton) { e.preventDefault(); e.stopPropagation(); fsButton.click(); return; }" +
+                                "      var video = d.querySelector('video');" +
+                                "      if (!video) return;" +
+                                "      var target = video.closest('.plyr, .video-js, .jwplayer, .fp-player, .player, .video-container') || video;" +
+                                "      var request = target.requestFullscreen || target.webkitRequestFullscreen || video.requestFullscreen || video.webkitRequestFullscreen;" +
+                                "      if (request) { e.preventDefault(); e.stopPropagation(); try { var result = request.call(target); if (result && result.catch) result.catch(function() {}); } catch(err) {} }" +
+                                "    }, true);" +
+                                "    Array.prototype.forEach.call(doc.querySelectorAll('iframe'), function(frame) {" +
+                                "      try { installFullscreenKeys(frame.contentDocument); } catch(err) {}" +
+                                "    });" +
+                                "    var observer = new MutationObserver(function() {" +
+                                "      Array.prototype.forEach.call(doc.querySelectorAll('iframe'), function(frame) {" +
+                                "        try { installFullscreenKeys(frame.contentDocument); } catch(err) {}" +
+                                "      });" +
+                                "    });" +
+                                "    if (doc.documentElement) observer.observe(doc.documentElement, {childList:true, subtree:true});" +
+                                "  }" +
+                                "  installFullscreenKeys(document);" +
+                                "})();",
+                        null
+                );
             }
         });
         player.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -232,6 +303,72 @@ public class MainActivity extends AppCompatActivity {
         }
 
         return cookies;
+    }
+
+    /**
+     * AniWorld startet diesen Timer beim Auswählen eines Hosters.
+     * Es wird die Zeit seit dem Klick gemessen, nicht die tatsächliche Videowiedergabe.
+     */
+    private void startEpisodeWatchTimer() {
+        cancelEpisodeWatchTimer();
+
+        if (currentEpisodeId == null || currentEpisodeId.isEmpty()) {
+            Log.w("AniWorld", "Watch-Timer nicht gestartet: Episoden-ID fehlt");
+            return;
+        }
+
+        final String episodeIdForTimer = currentEpisodeId;
+
+        watchEpisodeRunnable = () -> {
+            watchEpisodeRunnable = null;
+
+            if (!episodeIdForTimer.equals(currentEpisodeId) || currentEpisodeMarked) {
+                return;
+            }
+
+            currentEpisodeMarked = true;
+            markEpisodeAsSeen(episodeIdForTimer);
+        };
+
+        watchHandler.postDelayed(watchEpisodeRunnable, 2 * 60 * 1000L);
+        Log.d("AniWorld", "Watch-Timer gestartet für Episode: " + episodeIdForTimer);
+    }
+
+    private void cancelEpisodeWatchTimer() {
+        if (watchEpisodeRunnable != null) {
+            watchHandler.removeCallbacks(watchEpisodeRunnable);
+            watchEpisodeRunnable = null;
+        }
+    }
+
+    private void markEpisodeAsSeen(String episodeId) {
+        if (episodeId == null || episodeId.isEmpty()) {
+            Log.e("AniWorld", "Keine Episoden-ID zum Markieren vorhanden");
+            return;
+        }
+
+        io.execute(() -> {
+            try {
+                org.jsoup.Connection.Response response = Jsoup.connect(BASE + "/ajax/lastseen")
+                        .cookies(getCookiesFor(BASE))
+                        .userAgent("Mozilla/5.0 (Linux; Android 10; Fire TV)")
+                        .header("Content-Type",
+                                "application/x-www-form-urlencoded; charset=UTF-8")
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .referrer(BASE + "/")
+                        .data("episode", episodeId)
+                        .method(org.jsoup.Connection.Method.POST)
+                        .ignoreContentType(true)
+                        .execute();
+
+                Log.i("AniWorld", "lastseen Antwort HTTP "
+                        + response.statusCode() + " für Episode " + episodeId
+                        + "; Antwort: " + response.body());
+
+            } catch (Exception e) {
+                Log.e("AniWorld", "Fehler beim Markieren der Episode " + episodeId, e);
+            }
+        });
     }
 
     private void hideSystemBars() {
@@ -540,7 +677,6 @@ public class MainActivity extends AppCompatActivity {
                         .timeout(18000)
                         .get();
 
-                // AniWorld listet Folgen normalerweise in der Staffel-Episoden-Tabelle.
                 Element table = doc.selectFirst("table.seasonEpisodesList");
                 Elements links = table != null
                         ? table.select("tr a[href]")
@@ -548,24 +684,23 @@ public class MainActivity extends AppCompatActivity {
 
                 for (Element a : links) {
                     String href = a.attr("href").trim();
-                    String title = a.text().trim();
                     if (href.isEmpty()) continue;
 
                     String fullUrl = a.absUrl("href");
-                    if (title.isEmpty()) title = "Episode " + (episodes.size() + 1);
-                    if (!fullUrl.isEmpty() && !containsUrl(episodes, fullUrl)) {
-                        episodes.add(new Show(title, fullUrl));
-                    }
+                    if (fullUrl.isEmpty() || containsUrl(episodes, fullUrl)) continue;
+
+                    String title = extractEpisodeTitle(a, episodes.size() + 1);
+                    episodes.add(new Show(title, fullUrl));
                 }
 
-                // Zusätzlicher Fallback, falls die Tabelle vorhanden, aber leer ist.
+                // Fallback: manche AniWorld-Seiten haben keine seasonEpisodesList-Tabelle.
                 if (episodes.isEmpty()) {
                     Elements fallback = doc.select("a[href*=/episode/]");
                     for (Element a : fallback) {
                         String fullUrl = a.absUrl("href");
                         if (fullUrl.isEmpty() || containsUrl(episodes, fullUrl)) continue;
-                        String title = a.text().trim();
-                        if (title.isEmpty()) title = "Episode " + (episodes.size() + 1);
+
+                        String title = extractEpisodeTitle(a, episodes.size() + 1);
                         episodes.add(new Show(title, fullUrl));
                     }
                 }
@@ -592,15 +727,147 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * Liest den Episodentitel aus dem Link oder aus der zugehörigen Tabellenzeile.
+     * AniWorld liefert die Episodennummer teilweise als Linktext und den eigentlichen
+     * Titel in einer benachbarten Tabellenzelle.
+     */
+    private String extractEpisodeTitle(Element link, int fallbackNumber) {
+        String linkText = link.text().trim();
+        String title = firstNonEmpty(
+                link.attr("title"),
+                link.attr("data-title"),
+                link.attr("aria-label")
+        );
+
+        Element row = link;
+        while (row != null && !"tr".equalsIgnoreCase(row.tagName())) {
+            row = row.parent();
+        }
+
+        if (row != null) {
+            // Bevorzugt explizite Titel-Elemente bzw. data-title-Attribute.
+            Element titleElement = row.selectFirst(
+                    ".episodeTitle, .episode-title, .episodeName, .episode-name, " +
+                            "[class*=episodeTitle], [class*=episodeName], [data-title]"
+            );
+
+            if (titleElement != null && titleElement != link) {
+                String rowTitle = firstNonEmpty(
+                        titleElement.attr("data-title"),
+                        titleElement.attr("title"),
+                        titleElement.text()
+                );
+                if (!rowTitle.isEmpty() && !isEpisodeNumberOnly(rowTitle)) {
+                    title = rowTitle;
+                }
+            }
+
+            // Häufig steht die Nummer in der ersten und der Episodentitel
+            // in der zweiten Tabellenzelle.
+            if (title.isEmpty() || isEpisodeNumberOnly(title)) {
+                Elements cells = row.select("td");
+                int linkCellIndex = -1;
+
+                for (int i = 0; i < cells.size(); i++) {
+                    if (cells.get(i).selectFirst("a[href]") != null
+                            && cells.get(i).selectFirst("a[href]").equals(link)) {
+                        linkCellIndex = i;
+                        break;
+                    }
+                }
+
+                if (linkCellIndex >= 0) {
+                    for (int i = linkCellIndex + 1; i < cells.size(); i++) {
+                        Element cell = cells.get(i);
+                        String candidate = firstNonEmpty(
+                                cell.attr("data-title"),
+                                cell.attr("title"),
+                                cell.text()
+                        );
+                        if (!candidate.isEmpty() && !isEpisodeNumberOnly(candidate)) {
+                            title = candidate;
+                            break;
+                        }
+                    }
+                }
+
+                // Falls die Linkzelle nicht eindeutig gefunden wurde,
+                // die nicht nummerischen Zellen der Zeile prüfen.
+                if (title.isEmpty() || isEpisodeNumberOnly(title)) {
+                    for (Element cell : cells) {
+                        String candidate = cell.text().trim();
+                        if (!candidate.isEmpty()
+                                && !isEpisodeNumberOnly(candidate)
+                                && !candidate.equals(linkText)) {
+                            title = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (title.isEmpty() || isEpisodeNumberOnly(title)) {
+            if (!linkText.isEmpty() && !isEpisodeNumberOnly(linkText)) {
+                title = linkText;
+            }
+        }
+
+        if (title.isEmpty() || isEpisodeNumberOnly(title)) {
+            String number = linkText.replaceAll("[^0-9]", "");
+            if (number.isEmpty()) {
+                java.util.regex.Matcher matcher =
+                        java.util.regex.Pattern.compile("/episode/(\\d+)")
+                                .matcher(link.attr("href"));
+                if (matcher.find()) number = matcher.group(1);
+            }
+            if (number.isEmpty()) number = String.valueOf(fallbackNumber);
+            return "Episode " + number;
+        }
+
+        // Wenn der Link selbst nur die Episodennummer enthält, diese vor
+        // dem gefundenen Titel anzeigen.
+        if (isEpisodeNumberOnly(linkText)
+                && !title.toLowerCase(java.util.Locale.ROOT).startsWith("episode ")
+                && !title.toLowerCase(java.util.Locale.ROOT).startsWith("folge ")) {
+            String number = linkText.replaceAll("[^0-9]", "");
+            if (!number.isEmpty()) {
+                return "Episode " + number + " – " + title;
+            }
+        }
+
+        return title.replaceAll("\\s+", " ").trim();
+    }
+
+    private String firstNonEmpty(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private boolean isEpisodeNumberOnly(String value) {
+        if (value == null) return true;
+        return value.trim().matches("(?i)^(episode|folge)?\\s*\\d+(\\s*[./-]\\s*\\d+)?$");
+    }
+
     private void openEpisode(Show episode) {
+        cancelEpisodeWatchTimer();
+        currentEpisodeId = null;
+        currentEpisodeMarked = false;
+
         level = 3;
         catalog.removeAllViews();
         sectionTitle.setText(episode.title);
         addMessage("Suche Video-Hoster …");
 
         io.execute(() -> {
-            List<Show> hosters = new ArrayList<>();
+            List<StreamHoster> hosters = new ArrayList<>();
             String error = null;
+            String parsedEpisodeId = "";
 
             try {
                 Document doc = Jsoup.connect(episode.url)
@@ -611,27 +878,114 @@ public class MainActivity extends AppCompatActivity {
                         .timeout(20000)
                         .get();
 
-                // AniWorld verwendet li.episodeLink bzw. li[data-link-target].
-                // Diese Selektoren entsprechen dem funktionierenden Python-PC-Client.
-                for (Element li : doc.select("li.episodeLink, li[data-link-target]")) {
-                    String target = li.attr("data-link-target").trim();
-                    Element heading = li.selectFirst("h4");
-                    String name = heading != null
-                            ? heading.text().trim()
-                            : li.text().trim();
+                Element episodeTitleElement =
+                        doc.selectFirst(".hosterSiteTitle[data-episode-id]");
+                parsedEpisodeId = episodeTitleElement != null
+                        ? episodeTitleElement.attr("data-episode-id").trim()
+                        : "";
 
-                    if (target.isEmpty()) {
-                        Element link = li.selectFirst("a[href]");
-                        if (link != null) target = link.attr("href").trim();
+                // AniWorld ordnet jeden Hoster über data-lang-key einer Sprache zu:
+                // 1 = Deutsch (Dub), 3 = deutsche Untertitel, 2 = englische Untertitel.
+                Elements languageRows = doc.select(
+                        ".hosterSiteVideo ul li[data-lang-key], li.episodeLink[data-lang-key]"
+                );
+
+                for (Element li : languageRows) {
+                    String languageKey = li.attr("data-lang-key").trim();
+                    String language;
+                    int priority;
+
+                    switch (languageKey) {
+                        case "1":
+                            language = "Deutsch";
+                            priority = 1;
+                            break;
+                        case "3":
+                            language = "Deutsch mit Untertiteln";
+                            priority = 2;
+                            break;
+                        case "2":
+                            language = "Englisch mit Untertiteln";
+                            priority = 3;
+                            break;
+                        default:
+                            language = "Weitere Sprache";
+                            priority = 99;
+                            break;
                     }
 
-                    if (!target.isEmpty()) {
-                        String absoluteUrl = new java.net.URL(new java.net.URL(episode.url), target).toString();
-                        if (!containsUrl(hosters, absoluteUrl)) {
-                            hosters.add(new Show(name.isEmpty() ? "Hoster" : name, absoluteUrl));
+                    String target = li.attr("data-link-target").trim();
+                    Element link = li.selectFirst("a[href]");
+                    if (target.isEmpty() && link != null) {
+                        target = link.attr("href").trim();
+                    }
+                    if (target.isEmpty()) continue;
+
+                    String hosterName = "";
+                    Element heading = li.selectFirst("h4");
+                    if (heading != null) hosterName = heading.text().trim();
+                    if (hosterName.isEmpty() && link != null) {
+                        hosterName = link.text().trim();
+                    }
+                    if (hosterName.isEmpty()) hosterName = li.text().trim();
+                    if (hosterName.isEmpty()) hosterName = "Hoster";
+
+                    String absoluteUrl = new java.net.URL(
+                            new java.net.URL(episode.url), target
+                    ).toString();
+
+                    boolean duplicate = false;
+                    for (StreamHoster existing : hosters) {
+                        if (existing.url.equals(absoluteUrl)) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate) {
+                        hosters.add(new StreamHoster(
+                                hosterName, absoluteUrl, language, priority
+                        ));
+                    }
+                }
+
+                // Fallback für ältere AniWorld-Seiten ohne data-lang-key.
+                if (hosters.isEmpty()) {
+                    for (Element li : doc.select("li.episodeLink, li[data-link-target]")) {
+                        String target = li.attr("data-link-target").trim();
+                        Element link = li.selectFirst("a[href]");
+                        if (target.isEmpty() && link != null) {
+                            target = link.attr("href").trim();
+                        }
+                        if (target.isEmpty()) continue;
+
+                        String name = "";
+                        Element heading = li.selectFirst("h4");
+                        if (heading != null) name = heading.text().trim();
+                        if (name.isEmpty() && link != null) name = link.text().trim();
+                        if (name.isEmpty()) name = "Hoster";
+
+                        String absoluteUrl = new java.net.URL(
+                                new java.net.URL(episode.url), target
+                        ).toString();
+                        boolean duplicate = false;
+                        for (StreamHoster existing : hosters) {
+                            if (existing.url.equals(absoluteUrl)) {
+                                duplicate = true;
+                                break;
+                            }
+                        }
+                        if (!duplicate) {
+                            hosters.add(new StreamHoster(
+                                    name, absoluteUrl, "Sprache unbekannt", 99
+                            ));
                         }
                     }
                 }
+
+                // Gewünschte Reihenfolge: Deutsch, Deutsch-Sub, Englisch-Sub.
+                hosters.sort((a, b) ->
+                        Integer.compare(a.languagePriority, b.languagePriority)
+                );
 
                 if (hosters.isEmpty()) {
                     error = "Auf der Episodenseite wurden keine Hoster-Links gefunden.";
@@ -641,22 +995,82 @@ public class MainActivity extends AppCompatActivity {
             }
 
             final String err = error;
-            final List<Show> data = hosters;
+            final List<StreamHoster> data = hosters;
+            final String episodeId = parsedEpisodeId;
             runOnUiThread(() -> {
                 catalog.removeAllViews();
                 sectionTitle.setText(episode.title);
+                currentEpisodeId = episodeId;
+                currentEpisodeMarked = false;
 
                 if (err != null) {
                     addMessage(err);
                     addAction("Episodenseite im Browser öffnen", () -> openPlayer(episode.url));
                 } else {
-                    for (Show hoster : data) {
+                    String currentLanguage = null;
+                    for (StreamHoster hoster : data) {
+                        if (!hoster.language.equals(currentLanguage)) {
+                            currentLanguage = hoster.language;
+                            addMessage(currentLanguage);
+                        }
                         addAction(hoster.title + "  ·  Abspielen",
-                                () -> openPlayer(hoster.url));
+                                () -> {
+                                    startEpisodeWatchTimer();
+                                    openPlayer(hoster.url);
+                                });
                     }
                 }
             });
         });
+    }
+
+    /**
+     * WebView meldet HTML5-Videovollbild über WebChromeClient.
+     * Die Videofläche wird dann direkt über den Activity-Inhalt gelegt.
+     */
+    private class PlayerWebChromeClient extends WebChromeClient {
+        @Override
+        public void onShowCustomView(View view, CustomViewCallback callback) {
+            if (customView != null) {
+                callback.onCustomViewHidden();
+                return;
+            }
+
+            customView = view;
+            customViewCallback = callback;
+
+            FrameLayout content = findViewById(android.R.id.content);
+            content.addView(
+                    customView,
+                    new FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+            );
+
+            player.setVisibility(View.GONE);
+            hideSystemBars();
+        }
+
+        @Override
+        public void onHideCustomView() {
+            if (customView == null) return;
+
+            FrameLayout content = findViewById(android.R.id.content);
+            content.removeView(customView);
+
+            customView = null;
+            player.setVisibility(View.VISIBLE);
+
+            WebChromeClient.CustomViewCallback callback = customViewCallback;
+            customViewCallback = null;
+
+            if (callback != null) {
+                callback.onCustomViewHidden();
+            }
+
+            hideSystemBars();
+        }
     }
 
     private void openPlayer(String url) {
@@ -667,6 +1081,11 @@ public class MainActivity extends AppCompatActivity {
         player.loadUrl(url);
     }
     private void showCatalog() {
+        cancelEpisodeWatchTimer();
+
+        if (customView != null && playerChromeClient != null) {
+            playerChromeClient.onHideCustomView();
+        }
         player.stopLoading();
         player.setVisibility(View.GONE);
         mainContent.setVisibility(View.VISIBLE);
@@ -706,5 +1125,10 @@ public class MainActivity extends AppCompatActivity {
         catalog.addView(b,lp);
     }
 
-    @Override protected void onDestroy(){io.shutdownNow();player.destroy();super.onDestroy();}
+    @Override protected void onDestroy(){
+        cancelEpisodeWatchTimer();
+        io.shutdownNow();
+        player.destroy();
+        super.onDestroy();
+    }
 }
