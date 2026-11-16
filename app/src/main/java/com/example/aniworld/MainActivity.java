@@ -45,6 +45,7 @@ import java.util.Map;
 import android.webkit.JavascriptInterface;
 import android.os.Handler;
 import android.os.Looper;
+import android.net.Uri;
 
 public class MainActivity extends AppCompatActivity {
     private static final String BASE = "https://aniworld.to";
@@ -68,7 +69,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean currentEpisodeMarked = false;
     private final Handler watchHandler = new Handler(Looper.getMainLooper());
     private Runnable watchEpisodeRunnable;
-
+    private Runnable playerStartSequence;
     private LinearLayout mainContent;
 
     private static class Show {
@@ -152,7 +153,7 @@ public class MainActivity extends AppCompatActivity {
         ws.setDatabaseEnabled(true);
         ws.setMediaPlaybackRequiresUserGesture(false);
         ws.setLoadsImagesAutomatically(true);
-        ws.setJavaScriptCanOpenWindowsAutomatically(true);
+        ws.setJavaScriptCanOpenWindowsAutomatically(false);
         ws.setSupportMultipleWindows(true);
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
@@ -164,9 +165,16 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean shouldOverrideUrlLoading(
                     WebView view,
-                    WebResourceRequest request
-            ) {
-                Log.d("AniWorld", "URL-Aufruf: " + request.getUrl());
+                    WebResourceRequest request) {
+
+                String scheme = request.getUrl().getScheme();
+
+                if (scheme == null ||
+                        (!scheme.equals("http") && !scheme.equals("https"))) {
+                    Log.d("AniWorld", "Externer Aufruf blockiert: " + request.getUrl());
+                    return true;
+                }
+
                 return false;
             }
 
@@ -219,21 +227,46 @@ public class MainActivity extends AppCompatActivity {
                 // Cookies dauerhaft speichern
                 CookieManager.getInstance().flush();
 
-                // Versuch, direkt eingebundene Videos automatisch zu starten
+                // Automatische Enter-Sequenz über Android-KeyEvents
+                if (playerStartSequence != null) {
+                    watchHandler.removeCallbacks(playerStartSequence);
+                }
+
+                playerStartSequence = () -> {
+                    if (player.getVisibility() != View.VISIBLE) {
+                        return;
+                    }
+
+                    // WebView für Tastatureingaben fokussieren
+                    player.requestFocus(View.FOCUS_DOWN);
+
+                    Log.d("AniWorld", "Sende ersten Enter-Druck");
+                    dispatchEnterKey();
+
+                    watchHandler.postDelayed(() -> {
+                        Log.d("AniWorld", "Sende zweiten Enter-Druck");
+                        dispatchEnterKey();
+                    }, 150);
+                };
+
+                watchHandler.postDelayed(playerStartSequence, 2500);
+
+                // Automatische Initialisierung des Players
                 view.evaluateJavascript(
                         "(function() {" +
-                                "  document.querySelectorAll('video').forEach(function(v) {" +
-                                "    v.autoplay = true;" +
-                                "    var p = v.play();" +
+                                "  var video = document.querySelector('video');" +
+                                "  if (video) {" +
+                                "    video.muted = false;" +
+                                "    var p = video.play();" +
                                 "    if (p && p.catch) p.catch(function() {});" +
-                                "  });" +
+                                "  }" +
                                 "})();",
                         null
                 );
 
+
                 // Doppeldruck auf OK/Enter der Fire-TV-Fernbedienung aktiviert
-                // den echten HTML5-Vollbildmodus. Der Aufruf erfolgt innerhalb
-                // eines echten DOM-Keydown-Events, damit die Browser-Geste gilt.
+                // den echten HTML5-Vollbildmodus.
                 view.evaluateJavascript(
                         "(function() {" +
                                 "  function installFullscreenKeys(doc) {" +
@@ -305,10 +338,6 @@ public class MainActivity extends AppCompatActivity {
         return cookies;
     }
 
-    /**
-     * AniWorld startet diesen Timer beim Auswählen eines Hosters.
-     * Es wird die Zeit seit dem Klick gemessen, nicht die tatsächliche Videowiedergabe.
-     */
     private void startEpisodeWatchTimer() {
         cancelEpisodeWatchTimer();
 
@@ -1071,6 +1100,43 @@ public class MainActivity extends AppCompatActivity {
 
             hideSystemBars();
         }
+
+        @Override
+        public boolean onCreateWindow(
+                WebView view,
+                boolean isDialog,
+                boolean isUserGesture,
+                android.os.Message resultMsg) {
+
+            Log.d("AniWorld", "Pop-up blockiert");
+            return false;
+        }
+    }
+
+    private void dispatchEnterKey() {
+        long downTime = android.os.SystemClock.uptimeMillis();
+
+        KeyEvent downEvent = new KeyEvent(
+                downTime,
+                downTime,
+                KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_ENTER,
+                0
+        );
+
+        player.dispatchKeyEvent(downEvent);
+
+        long upTime = android.os.SystemClock.uptimeMillis();
+
+        KeyEvent upEvent = new KeyEvent(
+                downTime,
+                upTime,
+                KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_ENTER,
+                0
+        );
+
+        player.dispatchKeyEvent(upEvent);
     }
 
     private void openPlayer(String url) {
