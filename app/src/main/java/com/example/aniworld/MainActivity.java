@@ -8,7 +8,7 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
-import android.content.Context;
+
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -50,7 +50,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.Collections;
@@ -75,7 +74,6 @@ public class MainActivity extends AppCompatActivity {
     private static final String BASE = "https://aniworld.to";
 
     private static final int ORANGE = 0xFFF47521;
-    private static final int BACKGROUND = 0xFF101010;
     private static final int CARD_BACKGROUND = 0xFF1C1C1C;
     private static final int SEARCH_BACKGROUND = 0xFF242424;
 
@@ -83,23 +81,25 @@ public class MainActivity extends AppCompatActivity {
             Executors.newSingleThreadExecutor();
 
     private final ThreadPoolExecutor imageExecutor =
-            (ThreadPoolExecutor) Executors.newFixedThreadPool(3);
+            (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
     private volatile PosterBatch activePosterBatch;
 
     private final LruCache<String, Bitmap> posterCache =
-            new LruCache<String, Bitmap>(
-                    (int) (Runtime.getRuntime().maxMemory() / 8)
+            new LruCache<>(
+                    (int) Math.max(
+                            4L * 1024 * 1024,
+                            Math.min(
+                                    Runtime.getRuntime().maxMemory() / 16,
+                                    24L * 1024 * 1024
+                            )
+                    )
             ) {
                 @Override
                 protected int sizeOf(String key, Bitmap bitmap) {
                     return bitmap.getByteCount();
                 }
             };
-
-    // Verhindert parallele Downloads derselben Poster-URL.
-    private final ConcurrentHashMap<String, Object> posterLocks =
-            new ConcurrentHashMap<>();
 
     private LinearLayout catalog;
     private LinearLayout navigation;
@@ -109,7 +109,6 @@ public class MainActivity extends AppCompatActivity {
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private PlayerWebChromeClient playerChromeClient;
-    private ScrollView catalogScroll;
 
     private final List<Show> currentShows = new ArrayList<>();
 
@@ -133,6 +132,20 @@ public class MainActivity extends AppCompatActivity {
     private Runnable playerStartSequence;
 
     private LinearLayout mainContent;
+
+    private static final boolean DEBUG = false;
+    private static final boolean INFO = false;
+
+    private void logDebug(String message) {
+        if (DEBUG) {
+            Log.d("AniWorld", message);
+        }
+    }
+    private void logInfo(String message) {
+        if (INFO) {
+            Log.i("AniWorld", message);
+        }
+    }
 
     private static class Show {
         String title;
@@ -164,6 +177,23 @@ public class MainActivity extends AppCompatActivity {
             super(title, url);
             this.language = language;
             this.languagePriority = languagePriority;
+        }
+    }
+
+    private static class PosterCard {
+        final ImageView imageView;
+        final TextView placeholder;
+        final Show show;
+        boolean requested;
+
+        PosterCard(
+                ImageView imageView,
+                TextView placeholder,
+                Show show
+        ) {
+            this.imageView = imageView;
+            this.placeholder = placeholder;
+            this.show = show;
         }
     }
 
@@ -224,7 +254,6 @@ public class MainActivity extends AppCompatActivity {
         sectionTitle = findViewById(R.id.sectionTitle);
         search = findViewById(R.id.search);
         player = findViewById(R.id.playerWeb);
-        catalogScroll = findViewById(R.id.catalogScroll);
 
         // Suchfeld auch beim Fokus dunkel halten.
         search.setBackground(
@@ -293,17 +322,12 @@ public class MainActivity extends AppCompatActivity {
 
         WebSettings ws = player.getSettings();
 
-        Log.i(
-                "AniWorld",
+        logInfo(
                 "WebView User-Agent: " + ws.getUserAgentString()
         );
 
         if (WebView.getCurrentWebViewPackage() != null) {
-            Log.i(
-                    "AniWorld",
-                    "WebView Version: "
-                            + WebView.getCurrentWebViewPackage().versionName
-            );
+            logInfo("WebView Version: " + WebView.getCurrentWebViewPackage().versionName);
         }
 
         ws.setJavaScriptEnabled(true);
@@ -335,8 +359,7 @@ public class MainActivity extends AppCompatActivity {
                         || (!scheme.equals("http")
                         && !scheme.equals("https"))) {
 
-                    Log.d(
-                            "AniWorld",
+                    logDebug(
                             "Externer Aufruf blockiert: "
                                     + request.getUrl()
                     );
@@ -421,12 +444,10 @@ public class MainActivity extends AppCompatActivity {
 
                     player.requestFocus(View.FOCUS_DOWN);
 
-                    Log.d("AniWorld", "Sende ersten Enter-Druck");
-
+                    logDebug("Sende Enter für Vollbild");
                     dispatchEnterKey();
 
                     watchHandler.postDelayed(() -> {
-                        Log.d("AniWorld", "Sende zweiten Enter-Druck");
                         dispatchEnterKey();
                     }, 150);
                 };
@@ -582,8 +603,7 @@ public class MainActivity extends AppCompatActivity {
                 2 * 60 * 1000L
         );
 
-        Log.d(
-                "AniWorld",
+        logDebug(
                 "Watch-Timer gestartet für Episode: "
                         + episodeIdForTimer
         );
@@ -631,9 +651,7 @@ public class MainActivity extends AppCompatActivity {
                                 .ignoreContentType(true)
                                 .execute();
 
-                Log.i(
-                        "AniWorld",
-                        "lastseen Antwort HTTP "
+                logInfo("Lastseen Antwort HTTP "
                                 + response.statusCode()
                                 + " für Episode "
                                 + episodeId
@@ -921,8 +939,7 @@ public class MainActivity extends AppCompatActivity {
                 return "";
             }
 
-            Log.d(
-                    "AniWorld",
+            logDebug(
                     "Cover gefunden: " + show.title
                             + " | " + imageUrl
             );
@@ -1100,7 +1117,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // Bei URLs der Form /anime/slug/stream/episode-...
+        // Bei URLs der Form /anime/slug/stream/episode-xxx
         // lässt sich der Anime direkt aus dem Pfad ableiten.
         String animeUrl =
                 getAnimeUrlFromEpisodeUrl(
@@ -1410,8 +1427,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (anime == null) {
-                Log.d(
-                        "AniWorld",
+                logDebug(
                         "Kein Anime für Episoden-Link gefunden: "
                                 + episodeUrl
                 );
@@ -1499,11 +1515,7 @@ public class MainActivity extends AppCompatActivity {
 
         batch.cancelled = true;
 
-        Log.i(
-                "AniWorld",
-                "Poster-Verarbeitung wird abgebrochen: "
-                        + batch.finished.get() + "/" + batch.total
-        );
+        logInfo("Poster-Verarbeitung wird abgebrochen: " + batch.finished.get() + "/" + batch.total);
 
         // Alle noch wartenden und laufenden Aufgaben abbrechen.
         synchronized (batch.tasks) {
@@ -1530,6 +1542,40 @@ public class MainActivity extends AppCompatActivity {
         activePosterBatch = null;
     }
 
+    private Bitmap decodePoster(File file) {
+
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+
+        BitmapFactory.decodeFile(
+                file.getAbsolutePath(),
+                bounds
+        );
+
+        int reqWidth = dp(150);
+        int reqHeight = dp(225);
+
+        int sampleSize = 1;
+
+        while (
+                bounds.outWidth / (sampleSize * 2) >= reqWidth
+                        && bounds.outHeight / (sampleSize * 2) >= reqHeight
+        ) {
+            sampleSize *= 2;
+        }
+
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sampleSize;
+
+        // Spart gegenüber ARGB_8888 ungefähr die Hälfte des Bitmap-RAMs.
+        options.inPreferredConfig = Bitmap.Config.RGB_565;
+
+        return BitmapFactory.decodeFile(
+                file.getAbsolutePath(),
+                options
+        );
+    }
+
     private void loadPoster(
             ImageView imageView,
             TextView placeholder,
@@ -1549,9 +1595,7 @@ public class MainActivity extends AppCompatActivity {
                 Bitmap bitmap = null;
                 String imageUrl = show.posterUrl;
 
-                boolean diskHit = false;
                 boolean downloaded = false;
-                boolean memoryHit = false;
 
                 try {
 
@@ -1594,7 +1638,6 @@ public class MainActivity extends AppCompatActivity {
                     bitmap = posterCache.get(imageUrl);
 
                     if (bitmap != null) {
-                        memoryHit = true;
                         batch.memoryHits.incrementAndGet();
                     }
 
@@ -1605,12 +1648,9 @@ public class MainActivity extends AppCompatActivity {
 
                         if (posterFile.exists() && posterFile.length() > 0) {
 
-                            bitmap = BitmapFactory.decodeFile(
-                                    posterFile.getAbsolutePath()
-                            );
+                            bitmap = decodePoster(posterFile);
 
                             if (bitmap != null) {
-                                diskHit = true;
                                 batch.diskHits.incrementAndGet();
                                 posterCache.put(imageUrl, bitmap);
                             }
@@ -1698,9 +1738,7 @@ public class MainActivity extends AppCompatActivity {
                                 return;
                             }
 
-                            bitmap = BitmapFactory.decodeFile(
-                                    posterFile.getAbsolutePath()
-                            );
+                            bitmap = decodePoster(posterFile);
 
                             if (bitmap != null) {
                                 downloaded = true;
@@ -1790,9 +1828,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (finished % 25 == 0 || finished == batch.total) {
 
-            Log.i(
-                    "AniWorld",
-                    "Poster-Fortschritt: "
+            logInfo("Poster-Fortschritt: "
                             + finished + "/" + batch.total
                             + " | Neu heruntergeladen: "
                             + batch.downloaded.get()
@@ -1807,9 +1843,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (finished == batch.total) {
 
-            Log.i(
-                    "AniWorld",
-                    "Poster-Verarbeitung abgeschlossen: "
+            logInfo("Poster-Verarbeitung abgeschlossen: "
                             + finished + "/" + batch.total
                             + " | Neu: " + batch.downloaded.get()
                             + " | Festplatten-Cache: "
@@ -1953,8 +1987,7 @@ public class MainActivity extends AppCompatActivity {
                 List<Show> allShows =
                         extractShowsFromDocument(doc, false);
 
-                Log.i(
-                        "AniWorld",
+                logInfo(
                         "Anime im vollständigen Katalog gefunden: "
                                 + allShows.size()
                 );
@@ -2019,14 +2052,17 @@ public class MainActivity extends AppCompatActivity {
 
     private void renderShows(List<Show> shows) {
 
-        if (shows.isEmpty()) {
+        if (shows == null || shows.isEmpty()) {
             addMessage("Keine Anime gefunden.");
             return;
         }
-        Log.i(
-                "AniWorld",
-                "Alle Shows: "
-                        + shows
+
+        // Eventuell noch laufende Poster der vorherigen Ansicht abbrechen.
+        cancelPosterBatch();
+
+        logInfo(
+                "Katalog wird schrittweise aufgebaut: " + shows.size()
+                        + " Anime"
         );
 
         HorizontalScrollView horizontalScroll =
@@ -2039,204 +2075,288 @@ public class MainActivity extends AppCompatActivity {
         horizontalScroll.setClipToPadding(false);
 
         LinearLayout row = new LinearLayout(this);
-
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.TOP);
         row.setClipChildren(false);
         row.setClipToPadding(false);
 
+        horizontalScroll.addView(row);
+        catalog.addView(horizontalScroll);
+
         PosterBatch posterBatch = new PosterBatch(shows.size());
         activePosterBatch = posterBatch;
 
-        if (shows.isEmpty()) {
-            Log.i("AniWorld", "Keine Anime für Poster vorhanden.");
+        // Beim Scrollen werden nur sichtbare und unmittelbar benachbarte
+        // Karten zum Laden ihrer Poster freigegeben.
+        horizontalScroll.getViewTreeObserver().addOnScrollChangedListener(
+                () -> loadVisiblePosters(
+                        horizontalScroll,
+                        row,
+                        posterBatch
+                )
+        );
+
+        final int[] nextIndex = {0};
+        final int cardsPerBatch = 8;
+
+        Runnable renderNextBatch = new Runnable() {
+            @Override
+            public void run() {
+
+                if (posterBatch.cancelled
+                        || activePosterBatch != posterBatch
+                        || isFinishing()
+                        || isDestroyed()) {
+                    return;
+                }
+
+                int end = Math.min(
+                        nextIndex[0] + cardsPerBatch,
+                        shows.size()
+                );
+
+                while (nextIndex[0] < end) {
+
+                    Show show = shows.get(nextIndex[0]);
+                    LinearLayout card = createShowCard(show);
+
+                    row.addView(
+                            card,
+                            createShowCardLayoutParams()
+                    );
+
+                    nextIndex[0]++;
+                }
+
+                // Nach jeder kleinen Gruppe das Layout aktualisieren und
+                // Poster für den aktuellen sichtbaren Bereich starten.
+                horizontalScroll.post(() ->
+                        loadVisiblePosters(
+                                horizontalScroll,
+                                row,
+                                posterBatch
+                        )
+                );
+
+                if (nextIndex[0] < shows.size()) {
+                    mainHandler.postDelayed(this, 16);
+                } else {
+                    logInfo("Alle Anime-Karten erstellt: " + shows.size());
+                }
+            }
+        };
+
+        mainHandler.post(renderNextBatch);
+    }
+
+    private LinearLayout createShowCard(Show show) {
+
+        LinearLayout card = new LinearLayout(this);
+
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.TOP);
+        card.setFocusable(true);
+        card.setClickable(true);
+        card.setClipChildren(false);
+        card.setClipToPadding(false);
+
+        card.setBackground(
+                round(
+                        CARD_BACKGROUND,
+                        0xFF333333,
+                        8
+                )
+        );
+
+        // Feste Posterfläche im Seitenverhältnis 2:3.
+        FrameLayout posterFrame = new FrameLayout(this);
+
+        posterFrame.setBackground(
+                round(
+                        0xFF252525,
+                        0xFF333333,
+                        8
+                )
+        );
+
+        posterFrame.setClipToOutline(true);
+
+        ImageView poster = new ImageView(this);
+        poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        poster.setBackgroundColor(0xFF252525);
+        poster.setFocusable(false);
+
+        posterFrame.addView(
+                poster,
+                new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                )
+        );
+
+        // Platzhalter bleibt sichtbar, bis das Poster erfolgreich geladen ist.
+        TextView placeholder = new TextView(this);
+
+        String initial = show.title == null
+                ? "?"
+                : show.title.trim();
+
+        if (initial.length() > 2) {
+            initial = initial.substring(0, 2);
+        }
+
+        placeholder.setText(initial.toUpperCase(Locale.ROOT));
+        placeholder.setTextColor(0xFF777777);
+        placeholder.setTextSize(30);
+        placeholder.setTypeface(null, Typeface.BOLD);
+        placeholder.setGravity(Gravity.CENTER);
+        placeholder.setBackground(
+                round(0xFF252525, 0xFF333333, 8)
+        );
+
+        posterFrame.addView(
+                placeholder,
+                new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                )
+        );
+
+        LinearLayout.LayoutParams imageParams =
+                new LinearLayout.LayoutParams(
+                        dp(150),
+                        dp(225)
+                );
+
+        card.addView(posterFrame, imageParams);
+
+        // PosterCard wird am Card-Tag gespeichert und erst bei Bedarf geladen.
+        card.setTag(new PosterCard(poster, placeholder, show));
+
+        TextView title = new TextView(this);
+        title.setText(show.title);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(14);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setGravity(Gravity.TOP | Gravity.START);
+        title.setPadding(
+                dp(5),
+                dp(10),
+                dp(5),
+                dp(8)
+        );
+        title.setMaxLines(2);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+
+        LinearLayout.LayoutParams titleParams =
+                new LinearLayout.LayoutParams(
+                        dp(150),
+                        dp(52)
+                );
+
+        card.addView(title, titleParams);
+
+        card.setOnFocusChangeListener((v, hasFocus) -> {
+
+            if (hasFocus) {
+                card.setBackground(
+                        round(
+                                0xFF292019,
+                                ORANGE,
+                                8
+                        )
+                );
+                card.setScaleX(1.04f);
+                card.setScaleY(1.04f);
+
+            } else {
+                card.setBackground(
+                        round(
+                                CARD_BACKGROUND,
+                                0xFF333333,
+                                8
+                        )
+                );
+                card.setScaleX(1.0f);
+                card.setScaleY(1.0f);
+            }
+        });
+
+        card.setOnClickListener(v -> openSeries(show));
+
+        return card;
+    }
+
+    private LinearLayout.LayoutParams createShowCardLayoutParams() {
+
+        LinearLayout.LayoutParams cardParams =
+                new LinearLayout.LayoutParams(
+                        dp(150),
+                        dp(277)
+                );
+
+        cardParams.setMargins(
+                0,
+                dp(4),
+                dp(18),
+                dp(12)
+        );
+
+        return cardParams;
+    }
+
+    private void loadVisiblePosters(
+            HorizontalScrollView horizontalScroll,
+            LinearLayout row,
+            PosterBatch posterBatch
+    ) {
+
+        if (posterBatch.cancelled
+                || activePosterBatch != posterBatch
+                || horizontalScroll.getWidth() <= 0) {
             return;
         }
 
-        Log.i(
-                "AniWorld",
-                "Poster-Verarbeitung gestartet: "
-                        + shows.size()
-                        + " Anime werden geprüft"
-        );
+        int scrollLeft = horizontalScroll.getScrollX();
+        int viewportWidth = horizontalScroll.getWidth();
+        int preloadDistance = Math.max(viewportWidth, dp(450));
 
-        for (Show show : shows) {
+        int visibleLeft = Math.max(0, scrollLeft - preloadDistance);
+        int visibleRight = scrollLeft + viewportWidth + preloadDistance;
 
-            LinearLayout card = new LinearLayout(this);
+        for (int i = 0; i < row.getChildCount(); i++) {
 
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setGravity(Gravity.TOP);
-            card.setFocusable(true);
-            card.setClickable(true);
-            card.setClipChildren(false);
-            card.setClipToPadding(false);
+            View child = row.getChildAt(i);
 
-            card.setBackground(
-                    round(
-                            CARD_BACKGROUND,
-                            0xFF333333,
-                            8
-                    )
-            );
-
-            // Feste Posterfläche im Seitenverhältnis 2:3.
-            FrameLayout posterFrame = new FrameLayout(this);
-
-            posterFrame.setBackground(
-                    round(
-                            0xFF252525,
-                            0xFF333333,
-                            8
-                    )
-            );
-
-            posterFrame.setClipToOutline(true);
-
-            ImageView poster = new ImageView(this);
-
-            poster.setScaleType(
-                    ImageView.ScaleType.CENTER_CROP
-            );
-
-            poster.setBackgroundColor(0xFF252525);
-            poster.setFocusable(false);
-
-            poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            poster.setVisibility(View.VISIBLE);
-
-            posterFrame.addView(
-                    poster,
-                    new FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.MATCH_PARENT,
-                            FrameLayout.LayoutParams.MATCH_PARENT
-                    )
-            );
-
-            // Platzhalter, falls AniWorld kein Poster liefert.
-            TextView placeholder = new TextView(this);
-
-            String initial = show.title == null
-                    ? "?"
-                    : show.title.trim();
-
-            if (initial.length() > 2) {
-                initial = initial.substring(0, 2);
+            if (child.getRight() < visibleLeft) {
+                continue;
             }
 
-            placeholder.setText(initial.toUpperCase(Locale.ROOT));
-            placeholder.setTextColor(0xFF777777);
-            placeholder.setTextSize(30);
-            placeholder.setTypeface(null, Typeface.BOLD);
-            placeholder.setGravity(Gravity.CENTER);
-            placeholder.setBackground(
-                    round(0xFF252525, 0xFF333333, 8)
-            );
+            if (child.getLeft() > visibleRight) {
+                break;
+            }
 
-            posterFrame.addView(
-                    placeholder,
-                    new FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.MATCH_PARENT,
-                            FrameLayout.LayoutParams.MATCH_PARENT
-                    )
-            );
+            Object tag = child.getTag();
 
-            LinearLayout.LayoutParams imageParams =
-                    new LinearLayout.LayoutParams(
-                            dp(150),
-                            dp(225)
-                    );
+            if (!(tag instanceof PosterCard)) {
+                continue;
+            }
 
-            card.addView(posterFrame, imageParams);
+            PosterCard posterCard = (PosterCard) tag;
+
+            if (posterCard.requested) {
+                continue;
+            }
+
+            posterCard.requested = true;
 
             loadPoster(
-                    poster,
-                    placeholder,
-                    show,
+                    posterCard.imageView,
+                    posterCard.placeholder,
+                    posterCard.show,
                     posterBatch
             );
-
-            TextView title = new TextView(this);
-
-            title.setText(show.title);
-            title.setTextColor(Color.WHITE);
-            title.setTextSize(14);
-            title.setTypeface(null, Typeface.BOLD);
-            title.setGravity(
-                    Gravity.TOP | Gravity.START
-            );
-
-            title.setPadding(
-                    dp(5),
-                    dp(10),
-                    dp(5),
-                    dp(8)
-            );
-
-            title.setMaxLines(2);
-
-            title.setEllipsize(
-                    android.text.TextUtils.TruncateAt.END
-            );
-
-            LinearLayout.LayoutParams titleParams =
-                    new LinearLayout.LayoutParams(
-                            dp(150),
-                            dp(52)
-                    );
-
-            card.addView(title, titleParams);
-
-            card.setOnFocusChangeListener((v, hasFocus) -> {
-
-                if (hasFocus) {
-
-                    card.setBackground(
-                            round(
-                                    0xFF292019,
-                                    ORANGE,
-                                    8
-                            )
-                    );
-
-                    card.setScaleX(1.04f);
-                    card.setScaleY(1.04f);
-
-                } else {
-
-                    card.setBackground(
-                            round(
-                                    CARD_BACKGROUND,
-                                    0xFF333333,
-                                    8
-                            )
-                    );
-
-                    card.setScaleX(1.0f);
-                    card.setScaleY(1.0f);
-                }
-            });
-
-            card.setOnClickListener(v -> openSeries(show));
-
-            LinearLayout.LayoutParams cardParams =
-                    new LinearLayout.LayoutParams(
-                            dp(150),
-                            dp(277)
-                    );
-
-            cardParams.setMargins(
-                    0,
-                    dp(4),
-                    dp(18),
-                    dp(12)
-            );
-
-            row.addView(card, cardParams);
         }
-
-        horizontalScroll.addView(row);
-
-        catalog.addView(horizontalScroll);
     }
 
     // ---------------------------------------------------------
@@ -3013,7 +3133,7 @@ public class MainActivity extends AppCompatActivity {
                 Message resultMsg
         ) {
 
-            Log.d("AniWorld", "Pop-up blockiert");
+            logDebug("Pop-up blockiert");
 
             return false;
         }
@@ -3051,6 +3171,8 @@ public class MainActivity extends AppCompatActivity {
     // ---------------------------------------------------------
 
     private void openPlayer(String url) {
+
+        cancelPosterBatch();
 
         mainContent.setVisibility(View.GONE);
 
