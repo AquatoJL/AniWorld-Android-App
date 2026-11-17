@@ -179,6 +179,7 @@ public class MainActivity extends AppCompatActivity {
         String title;
         String url;
         String posterUrl;
+        boolean seen;
 
         Show(String title, String url) {
             this(title, url, "");
@@ -188,6 +189,7 @@ public class MainActivity extends AppCompatActivity {
             this.title = title;
             this.url = url;
             this.posterUrl = posterUrl;
+            this.seen = false;
         }
     }
 
@@ -2641,9 +2643,10 @@ public class MainActivity extends AppCompatActivity {
                             episodes.size() + 1
                     );
 
-                    episodes.add(
-                            new Show(title, fullUrl)
-                    );
+                    Show episode = new Show(title, fullUrl);
+                    episode.seen = a.hasClass("seen");
+
+                    episodes.add(episode);
                 }
 
                 if (episodes.isEmpty()) {
@@ -2665,9 +2668,10 @@ public class MainActivity extends AppCompatActivity {
                                 episodes.size() + 1
                         );
 
-                        episodes.add(
-                                new Show(title, fullUrl)
-                        );
+                        Show episode = new Show(title, fullUrl);
+                        episode.seen = a.hasClass("seen");
+
+                        episodes.add(episode);
                     }
                 }
 
@@ -2696,8 +2700,12 @@ public class MainActivity extends AppCompatActivity {
 
                     for (Show episode : data) {
 
+                        String label = episode.seen
+                                ? "✓  " + episode.title
+                                : episode.title;
+
                         addAction(
-                                episode.title,
+                                label,
                                 () -> openEpisode(episode)
                         );
                     }
