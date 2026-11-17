@@ -2,19 +2,20 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+val media3Version = "1.11.1"
+
 android {
     namespace = "com.example.aniworld"
     compileSdk {
-        version = release(35)
+        version = release(37)
     }
 
     defaultConfig {
         applicationId = "com.example.aniworld"
         minSdk = 30
-        targetSdk = 30
+        targetSdk = 33
         versionCode = 1
         versionName = "1.0"
-
     }
 
     buildTypes {
@@ -25,6 +26,7 @@ android {
             }
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -37,4 +39,10 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jsoup:jsoup:1.18.3")
+
+    // Media3 / ExoPlayer
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
 }

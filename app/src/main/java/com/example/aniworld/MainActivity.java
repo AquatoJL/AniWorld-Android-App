@@ -26,9 +26,11 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import org.json.JSONObject;
+import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -40,6 +42,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,6 +56,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.Collections;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.security.MessageDigest;
 
 import android.util.Log;
@@ -69,6 +74,20 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.ui.PlayerView;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+@androidx.media3.common.util.UnstableApi
 public class MainActivity extends AppCompatActivity {
 
     private static final String BASE = "https://aniworld.to";
@@ -76,6 +95,12 @@ public class MainActivity extends AppCompatActivity {
     private static final int ORANGE = 0xFFF47521;
     private static final int CARD_BACKGROUND = 0xFF1C1C1C;
     private static final int SEARCH_BACKGROUND = 0xFF242424;
+
+    private long lastLeftPress = 0;
+    private long lastRightPress = 0;
+    private static final long DOUBLE_PRESS_TIME = 200;
+    private static final long SEEK_NORMAL = 10_000;
+    private static final long SEEK_DOUBLE = 70_000;
 
     private final ExecutorService io =
             Executors.newSingleThreadExecutor();
@@ -106,6 +131,9 @@ public class MainActivity extends AppCompatActivity {
     private TextView sectionTitle;
     private EditText search;
     private WebView player;
+    private PlayerView nativePlayerView;
+    private ExoPlayer nativePlayer;
+    private volatile boolean nativeResolveInProgress = false;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private PlayerWebChromeClient playerChromeClient;
@@ -240,6 +268,82 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+
+        if (nativePlayerView != null
+                && nativePlayerView.getVisibility() == View.VISIBLE
+                && nativePlayer != null) {
+
+            if (event.getAction() == KeyEvent.ACTION_DOWN
+                    && event.getRepeatCount() == 0) {
+
+                switch (event.getKeyCode()) {
+
+                    case KeyEvent.KEYCODE_DPAD_RIGHT: {
+                        long now = SystemClock.uptimeMillis();
+
+                        if (now - lastRightPress < DOUBLE_PRESS_TIME) {
+                            nativePlayer.seekTo(
+                                    nativePlayer.getCurrentPosition() + SEEK_DOUBLE
+                            );
+                            lastRightPress = 0;
+                        } else {
+                            nativePlayer.seekTo(
+                                    nativePlayer.getCurrentPosition() + SEEK_NORMAL
+                            );
+                            lastRightPress = now;
+                        }
+
+                        return true;
+                    }
+
+                    case KeyEvent.KEYCODE_DPAD_LEFT: {
+                        long now = SystemClock.uptimeMillis();
+
+                        if (now - lastLeftPress < DOUBLE_PRESS_TIME) {
+                            nativePlayer.seekTo(
+                                    Math.max(0,
+                                            nativePlayer.getCurrentPosition() - SEEK_DOUBLE)
+                            );
+                            lastLeftPress = 0;
+                        } else {
+                            nativePlayer.seekTo(
+                                    Math.max(0,
+                                            nativePlayer.getCurrentPosition() - SEEK_NORMAL)
+                            );
+                            lastLeftPress = now;
+                        }
+
+                        return true;
+                    }
+
+                    case KeyEvent.KEYCODE_DPAD_CENTER:
+                    case KeyEvent.KEYCODE_ENTER:
+                    case KeyEvent.KEYCODE_NUMPAD_ENTER:
+
+                        if (nativePlayer.isPlaying()) {
+                            nativePlayer.pause();
+                        } else {
+                            nativePlayer.play();
+                        }
+
+                        return true;
+                }
+            }
+
+            if (event.getKeyCode() == KeyEvent.KEYCODE_DPAD_LEFT
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_CENTER
+                    || event.getKeyCode() == KeyEvent.KEYCODE_ENTER
+                    || event.getKeyCode() == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                return true;
+            }
+        }
+
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
 
@@ -254,6 +358,7 @@ public class MainActivity extends AppCompatActivity {
         sectionTitle = findViewById(R.id.sectionTitle);
         search = findViewById(R.id.search);
         player = findViewById(R.id.playerWeb);
+        nativePlayerView = findViewById(R.id.nativePlayerView);
 
         // Suchfeld auch beim Fokus dunkel halten.
         search.setBackground(
@@ -293,7 +398,8 @@ public class MainActivity extends AppCompatActivity {
                             return;
                         }
 
-                        if (player.getVisibility() == View.VISIBLE) {
+                        if (player.getVisibility() == View.VISIBLE
+                                || nativePlayerView.getVisibility() == View.VISIBLE) {
                             showCatalog();
                             return;
                         }
@@ -652,11 +758,11 @@ public class MainActivity extends AppCompatActivity {
                                 .execute();
 
                 logInfo("Lastseen Antwort HTTP "
-                                + response.statusCode()
-                                + " für Episode "
-                                + episodeId
-                                + "; Antwort: "
-                                + response.body()
+                        + response.statusCode()
+                        + " für Episode "
+                        + episodeId
+                        + "; Antwort: "
+                        + response.body()
                 );
 
             } catch (Exception e) {
@@ -1829,28 +1935,28 @@ public class MainActivity extends AppCompatActivity {
         if (finished % 25 == 0 || finished == batch.total) {
 
             logInfo("Poster-Fortschritt: "
-                            + finished + "/" + batch.total
-                            + " | Neu heruntergeladen: "
-                            + batch.downloaded.get()
-                            + " | Festplatten-Cache: "
-                            + batch.diskHits.get()
-                            + " | RAM-Cache: "
-                            + batch.memoryHits.get()
-                            + " | Fehler: "
-                            + batch.failed.get()
+                    + finished + "/" + batch.total
+                    + " | Neu heruntergeladen: "
+                    + batch.downloaded.get()
+                    + " | Festplatten-Cache: "
+                    + batch.diskHits.get()
+                    + " | RAM-Cache: "
+                    + batch.memoryHits.get()
+                    + " | Fehler: "
+                    + batch.failed.get()
             );
         }
 
         if (finished == batch.total) {
 
             logInfo("Poster-Verarbeitung abgeschlossen: "
-                            + finished + "/" + batch.total
-                            + " | Neu: " + batch.downloaded.get()
-                            + " | Festplatten-Cache: "
-                            + batch.diskHits.get()
-                            + " | RAM-Cache: "
-                            + batch.memoryHits.get()
-                            + " | Fehler: " + batch.failed.get()
+                    + finished + "/" + batch.total
+                    + " | Neu: " + batch.downloaded.get()
+                    + " | Festplatten-Cache: "
+                    + batch.diskHits.get()
+                    + " | RAM-Cache: "
+                    + batch.memoryHits.get()
+                    + " | Fehler: " + batch.failed.get()
             );
         }
     }
@@ -2996,12 +3102,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
 
-                hosters.sort((a, b) ->
-                        Integer.compare(
-                                a.languagePriority,
-                                b.languagePriority
-                        )
-                );
+                filterAndSortHosters(hosters);
 
                 if (hosters.isEmpty()) {
                     error = "Auf der Episodenseite wurden keine Hoster-Links gefunden.";
@@ -3051,8 +3152,37 @@ public class MainActivity extends AppCompatActivity {
                         addAction(
                                 hoster.title + "  ·  Abspielen",
                                 () -> {
-                                    startEpisodeWatchTimer();
-                                    openPlayer(hoster.url);
+                                    io.execute(() -> {
+                                        try {
+                                            String resolvedUrl = resolveRedirect(hoster.url);
+
+                                            runOnUiThread(() -> {
+                                                if (resolvedUrl.toLowerCase(Locale.ROOT).contains("vidmoly")) {
+                                                    startEpisodeWatchTimer();
+                                                    openVidmolyPlayer(resolvedUrl);
+                                                } else if (hoster.title != null
+                                                        && hoster.title.trim().equalsIgnoreCase("VOE")) {
+                                                    startEpisodeWatchTimer();
+                                                    openVOEPlayer(resolvedUrl);
+                                                } else if (resolvedUrl.toLowerCase(Locale.ROOT).contains("voe.sx")
+                                                        || resolvedUrl.toLowerCase(Locale.ROOT).contains("voe.to")) {
+                                                    startEpisodeWatchTimer();
+                                                    openVOEPlayer(resolvedUrl);
+                                                } else {
+                                                    startEpisodeWatchTimer();
+                                                    openPlayer(resolvedUrl);
+                                                }
+                                            });
+
+                                        } catch (Exception e) {
+                                            Log.e("AniWorld", "Redirect-Auflösung fehlgeschlagen", e);
+
+                                            runOnUiThread(() -> {
+                                                startEpisodeWatchTimer();
+                                                openPlayer(hoster.url);
+                                            });
+                                        }
+                                    });
                                 }
                         );
                     }
@@ -3060,6 +3190,611 @@ public class MainActivity extends AppCompatActivity {
             });
         });
     }
+
+    private String resolveRedirect(String url) {
+        try {
+            Connection.Response response = Jsoup.connect(url)
+                    .userAgent("Mozilla/5.0")
+                    .followRedirects(true)
+                    .ignoreContentType(true)
+                    .execute();
+            Log.i("AniWorld", "Resolved Url: " + response.url().toString());
+
+            return response.url().toString();
+        } catch (IOException e) {
+            return url;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // VIDMOLY -> NATIVER MEDIA3-PLAYER
+    // ---------------------------------------------------------
+
+    private void openVidmolyPlayer(String embedUrl) {
+        if (nativeResolveInProgress) {
+            return;
+        }
+
+        nativeResolveInProgress = true;
+        cancelPosterBatch();
+        cancelEpisodeWatchTimer();
+        addMessage("Lade Vidmoly-Stream …");
+
+        io.execute(() -> {
+            String streamUrl = null;
+            String error = null;
+
+            try {
+                streamUrl = resolveVidmolyStream(embedUrl);
+                if (streamUrl == null || streamUrl.isEmpty()) {
+                    error = "In der Vidmoly-Seite wurde keine direkte Videoquelle gefunden.";
+                }
+            } catch (Exception e) {
+                error = "Vidmoly konnte nicht aufgelöst werden: " + e.getMessage();
+                Log.e("AniWorld", "Vidmoly-Auflösung fehlgeschlagen", e);
+            }
+
+            final String resolved = streamUrl;
+            final String failure = error;
+
+            runOnUiThread(() -> {
+                nativeResolveInProgress = false;
+
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+
+                if (failure != null) {
+                    addMessage(failure);
+                    addMessage("Der Hoster hat möglicherweise seine Einbettung geändert oder liefert die Stream-Adresse erst per JavaScript nach.");
+                    return;
+                }
+
+                try {
+                    startNativePlayback(resolved, embedUrl);
+                } catch (Exception e) {
+                    Log.e("AniWorld", "Native Wiedergabe konnte nicht gestartet werden", e);
+                    addMessage("Native Wiedergabe fehlgeschlagen: " + e.getMessage());
+                }
+            });
+        });
+    }
+
+    private String resolveVidmolyStream(String embedUrl) throws Exception {
+        String cookieHeader = CookieManager.getInstance().getCookie(embedUrl);
+
+        org.jsoup.Connection connection = Jsoup.connect(embedUrl)
+                .userAgent("Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 Chrome/120 Safari/537.36")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+                .referrer(BASE + "/")
+                .timeout(20000)
+                .followRedirects(true);
+
+        if (cookieHeader != null && !cookieHeader.isEmpty()) {
+            connection.header("Cookie", cookieHeader);
+        }
+
+        Document document = connection.get();
+        String html = document.html();
+
+        // Vidmoly verwendet je nach Player-Version unterschiedliche Schreibweisen.
+        // Wir akzeptieren nur echte Medien-URLs, keine Poster-/Thumbnail-Bilder.
+        String[] patterns = {
+                "(?is)(?:file|src)\\s*[:=]\\s*['\"](https?:[^'\"]+?\\.(?:m3u8|mp4|mpd)(?:\\?[^'\"]*)?)['\"]",
+                "(?is)['\"]file['\"]\\s*:\\s*['\"](https?:[^'\"]+?\\.(?:m3u8|mp4|mpd)(?:\\?[^'\"]*)?)['\"]",
+                "(?is)(https?:\\/\\/[^'\"\\s<>]+?\\.(?:m3u8|mp4|mpd)(?:\\?[^'\"\\s<>]*)?)"
+        };
+
+        for (String expression : patterns) {
+            Matcher matcher = Pattern.compile(expression).matcher(html);
+            if (matcher.find()) {
+                String candidate = matcher.group(1)
+                        .replace("\\/", "/")
+                        .replace("&amp;", "&")
+                        .replace("\\u0026", "&")
+                        .trim();
+
+                if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
+                    return candidate;
+                }
+            }
+        }
+
+        // Zweiter Durchlauf: JSON-/JS-escaped URLs mit kodierten Slashes.
+        Matcher escaped = Pattern.compile("(?is)(https?:\\\\/\\\\/[^'\"\\s<>]+?\\.(?:m3u8|mp4|mpd)(?:\\?[^'\"\\s<>]*)?)").matcher(html);
+        if (escaped.find()) {
+            String candidate = escaped.group(1).replace("\\/", "/").replace("&amp;", "&");
+            if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    // ---------------------------------------------------------
+    // VOE -> NATIVER MEDIA3-PLAYER
+    // ---------------------------------------------------------
+
+    /*
+     * VOE verwendet wechselnde Embed-Domains. Deshalb ist der
+     * AniWorld-Hostername ("VOE") das zuverlässigste Erkennungsmerkmal.
+     * Die bekannte Hauptdomain dient nur als zusätzlicher Fallback.
+     */
+
+    private void openVOEPlayer(String embedUrl) {
+        if (nativeResolveInProgress) {
+            return;
+        }
+
+        nativeResolveInProgress = true;
+        cancelPosterBatch();
+        cancelEpisodeWatchTimer();
+        addMessage("Lade VOE-Stream …");
+
+        io.execute(() -> {
+            String streamUrl = null;
+            String error = null;
+
+            try {
+                streamUrl = resolveVOEStream(embedUrl);
+                if (streamUrl == null || streamUrl.isEmpty()) {
+                    error = "In der VOE-Seite wurde keine direkte HLS- oder Videoquelle gefunden.";
+                }
+            } catch (Exception e) {
+                error = "VOE konnte nicht aufgelöst werden: " + e.getMessage();
+                Log.e("AniWorld", "VOE-Auflösung fehlgeschlagen", e);
+            }
+
+            final String resolved = streamUrl;
+            final String failure = error;
+
+            runOnUiThread(() -> {
+                nativeResolveInProgress = false;
+
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+
+                if (failure != null) {
+                    addMessage(failure);
+                    addMessage("VOE kann seine Stream-Adresse geändert haben oder sie erst nach JavaScript-Ausführung bereitstellen.");
+                    addAction("VOE in WebView öffnen", () -> openPlayer(embedUrl));
+                    return;
+                }
+
+                try {
+                    startNativePlayback(resolved, embedUrl);
+                } catch (Exception e) {
+                    Log.e("AniWorld", "Native VOE-Wiedergabe konnte nicht gestartet werden", e);
+                    addMessage("Native VOE-Wiedergabe fehlgeschlagen: " + e.getMessage());
+                    addAction("VOE in WebView öffnen", () -> openPlayer(embedUrl));
+                }
+            });
+        });
+    }
+
+    private String documentTitle(String html) {
+        return Jsoup.parse(html).title();
+    }
+
+    private String resolveVOEStream(String embedUrl) throws Exception {
+        String currentUrl = resolveRedirect(embedUrl);
+        String html = null;
+        String finalVOEUrl = null;
+
+        // JavaScript-Weiterleitungen von VOE manuell verfolgen
+        for (int i = 0; i < 5; i++) {
+
+            Log.i("AniWorld", "VOE lade: " + currentUrl);
+
+            String cookieHeader = CookieManager.getInstance().getCookie(currentUrl);
+
+            org.jsoup.Connection connection = Jsoup.connect(currentUrl)
+                    .userAgent("Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 Chrome/120 Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+                    .referrer(BASE + "/")
+                    .timeout(20000)
+                    .followRedirects(true);
+
+            if (cookieHeader != null && !cookieHeader.isEmpty()) {
+                connection.header("Cookie", cookieHeader);
+            }
+
+            Connection.Response response = connection.execute();
+
+            finalVOEUrl = response.url().toString();
+            html = response.body();
+
+            Log.i("AniWorld", "VOE HTTP Status: " + response.statusCode());
+            Log.i("AniWorld", "VOE Final URL: " + finalVOEUrl);
+            Log.i("AniWorld", "VOE Titel: " + Jsoup.parse(html).title());
+
+            // JavaScript-Weiterleitung erkennen
+            Matcher redirectMatcher = Pattern.compile(
+                    "window\\.location\\.href\\s*=\\s*['\"]([^'\"]+)['\"]"
+            ).matcher(html);
+
+            if (redirectMatcher.find()) {
+                String redirectUrl = redirectMatcher.group(1);
+
+                if (redirectUrl.startsWith("http://")
+                        || redirectUrl.startsWith("https://")) {
+
+                    Log.i("AniWorld", "VOE JavaScript-Redirect: " + redirectUrl);
+                    currentUrl = redirectUrl;
+                    continue;
+                }
+            }
+
+            // Keine weitere Weiterleitung gefunden
+            break;
+        }
+
+        if (html == null) {
+            throw new Exception("VOE-Seite konnte nicht geladen werden");
+        }
+
+        Log.i("AniWorld", "VOE endgültige Seite: " + finalVOEUrl);
+
+        /*
+         * Ab hier bleibt die bisherige Stream-Erkennung erhalten.
+         */
+
+        /*
+         * VOE-Konfiguration aus den application/json-Scripten lesen.
+         * Die eigentliche Stream-Adresse steckt in einem verschlüsselten
+         * JSON-Array und darf nicht durch eine globale URL-Suche ersetzt werden.
+         */
+        Document voeDocument = Jsoup.parse(html);
+
+        Elements configScripts = voeDocument.select(
+                "script[type=application/json]"
+        );
+
+        Log.i("AniWorld", "VOE JSON-Konfigurationen gefunden: "
+                + configScripts.size());
+
+        for (Element script : configScripts) {
+            String scriptContent = script.data();
+
+            if (scriptContent == null || scriptContent.trim().isEmpty()) {
+                scriptContent = script.html();
+            }
+
+            scriptContent = scriptContent.trim();
+
+            try {
+                // VOE liefert normalerweise ein JSON-Array,
+                // dessen erstes Element der verschlüsselte String ist.
+                org.json.JSONArray array =
+                        new org.json.JSONArray(scriptContent);
+
+                if (array.length() == 0 || !(array.opt(0) instanceof String)) {
+                    continue;
+                }
+
+                String encoded = array.optString(0);
+
+                JSONObject config = decodeVOEConfig(encoded);
+
+                Log.i("AniWorld", "VOE-Konfiguration erfolgreich entschlüsselt");
+
+                String streamUrl = extractVOEStreamFromConfig(
+                        config,
+                        finalVOEUrl
+                );
+
+                if (streamUrl != null && isSupportedNativeStream(streamUrl)) {
+                    Log.i("AniWorld", "VOE-Stream aus Konfiguration gefunden: "
+                            + streamUrl);
+                    return streamUrl;
+                }
+
+                Log.w("AniWorld",
+                        "VOE-Konfiguration enthält keine unterstützte Stream-Adresse");
+
+            } catch (Exception e) {
+                Log.w("AniWorld",
+                        "VOE-Konfiguration konnte nicht entschlüsselt werden", e);
+            }
+        }
+
+        Log.e("AniWorld",
+                "Kein gültiger Stream in der VOE-Konfiguration gefunden.");
+
+        return null;
+    }
+
+    /** Entschlüsselt exakt die von loader.a40897e.js verwendete Konfiguration. */
+    private JSONObject decodeVOEConfig(String encoded) throws Exception {
+        if (encoded == null || encoded.isEmpty()) {
+            throw new IllegalArgumentException("Leere VOE-Konfiguration");
+        }
+
+        // Schritt 1: ROT13
+        StringBuilder rot13 = new StringBuilder(encoded.length());
+        for (int i = 0; i < encoded.length(); i++) {
+            char c = encoded.charAt(i);
+            if (c >= 'A' && c <= 'Z') {
+                c = (char) ((c - 'A' + 13) % 26 + 'A');
+            } else if (c >= 'a' && c <= 'z') {
+                c = (char) ((c - 'a' + 13) % 26 + 'a');
+            }
+            rot13.append(c);
+        }
+
+        // Schritt 2: die sieben Trenner durch '_' ersetzen; Schritt 3: '_' entfernen.
+        String cleaned = rot13.toString()
+                .replace("@$", "_")
+                .replace("^^", "_")
+                .replace("~@", "_")
+                .replace("%?", "_")
+                .replace("*~", "_")
+                .replace("!!", "_")
+                .replace("#&", "_")
+                .replace("_", "");
+
+        // Schritt 4: erstes atob(). atob liefert Byte-Zeichen, daher ISO-8859-1.
+        byte[] firstBytes = android.util.Base64.decode(
+                cleaned, android.util.Base64.DEFAULT);
+        String first = new String(firstBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+
+        // Schritt 5: jedes Zeichen um 3 reduzieren.
+        StringBuilder shifted = new StringBuilder(first.length());
+        for (int i = 0; i < first.length(); i++) {
+            shifted.append((char) (first.charAt(i) - 3));
+        }
+
+        // Schritt 6: umdrehen; Schritt 7: zweites atob(); Schritt 8: JSON parsen.
+        String reversed = shifted.reverse().toString();
+        byte[] jsonBytes = android.util.Base64.decode(
+                reversed, android.util.Base64.DEFAULT);
+        String json = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+        return new JSONObject(json);
+    }
+
+    private String extractVOEStreamFromConfig(JSONObject config, String pageUrl) {
+        if (config == null) return null;
+
+        // 1. Bevorzugt den HLS-Stream verwenden
+        String source = normalizeVOEStreamUrl(
+                config.optString("source", ""),
+                pageUrl
+        );
+
+        if (isSupportedNativeStream(source)) {
+            return source;
+        }
+
+        // 2. Fallback: MP4-Streams durchgehen
+        org.json.JSONArray fallback = config.optJSONArray("fallback");
+
+        if (fallback != null) {
+            // Höhere Qualität zuerst
+            for (int i = 0; i < fallback.length(); i++) {
+                JSONObject item = fallback.optJSONObject(i);
+                if (item == null) continue;
+
+                String file = normalizeVOEStreamUrl(
+                        item.optString("file", ""),
+                        pageUrl
+                );
+
+                if (isSupportedNativeStream(file)) {
+                    Log.i("AniWorld", "VOE Fallback gefunden: "
+                            + item.optString("label", "unbekannt")
+                            + " - " + file);
+
+                    return file;
+                }
+            }
+        }
+
+        // 3. Zusätzliche mögliche Felder
+        String primary = normalizeVOEStreamUrl(
+                config.optString("file", ""),
+                pageUrl
+        );
+
+        if (isSupportedNativeStream(primary)) {
+            return primary;
+        }
+
+        return null;
+    }
+
+    private String normalizeVOEStreamUrl(String value, String embedUrl) {
+        if (value == null) {
+            return "";
+        }
+
+        String candidate = value.trim()
+                .replace("\\/", "/")
+                .replace("\\u0026", "&")
+                .replace("\\x26", "&")
+                .replace("&amp;", "&")
+                .replace("\\u002F", "/")
+                .replace("\\x2F", "/");
+
+        if (candidate.startsWith("//")) {
+            candidate = "https:" + candidate;
+        }
+
+        try {
+            if (!candidate.startsWith("http://")
+                    && !candidate.startsWith("https://")) {
+                candidate = new URL(new URL(embedUrl), candidate).toString();
+            }
+        } catch (Exception ignored) {
+            return "";
+        }
+
+        return candidate;
+    }
+
+    private boolean isSupportedNativeStream(String url) {
+        if (url == null || url.isEmpty()) {
+            return false;
+        }
+
+        String lower = url.toLowerCase(Locale.ROOT);
+        return (lower.startsWith("http://") || lower.startsWith("https://"))
+                && (lower.contains(".m3u8")
+                || lower.contains(".mp4")
+                || lower.contains(".mpd"));
+    }
+
+    @UnstableApi
+    private void startNativePlayback(String streamUrl, String referer) {
+        cancelEpisodeWatchTimer();
+
+        if (nativePlayer != null) {
+            nativePlayer.release();
+            nativePlayer = null;
+        }
+
+        player.stopLoading();
+        player.setVisibility(View.GONE);
+
+        DefaultHttpDataSource.Factory dataSourceFactory =
+                new DefaultHttpDataSource.Factory()
+                        .setUserAgent("Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 Chrome/120 Safari/537.36")
+                        .setConnectTimeoutMs(15000)
+                        .setReadTimeoutMs(20000)
+                        .setAllowCrossProtocolRedirects(true);
+
+        Map<String, String> requestHeaders = new HashMap<>();
+        requestHeaders.put("Referer", referer);
+        try {
+            URL embed = new URL(referer);
+            requestHeaders.put("Origin", embed.getProtocol() + "://" + embed.getHost());
+        } catch (Exception ignored) {
+        }
+        // Cookies nur für die tatsächliche Stream-Domain übernehmen.
+        String cookies = CookieManager.getInstance().getCookie(streamUrl);
+        if (cookies != null && !cookies.isEmpty()) {
+            requestHeaders.put("Cookie", cookies);
+        }
+        dataSourceFactory.setDefaultRequestProperties(requestHeaders);
+
+        MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(streamUrl);
+        String lower = streamUrl.toLowerCase(Locale.ROOT);
+        if (lower.contains(".m3u8")) {
+            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8);
+        } else if (lower.contains(".mpd")) {
+            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_MPD);
+        }
+        MediaItem mediaItem = mediaItemBuilder.build();
+
+        nativePlayer = new ExoPlayer.Builder(this).build();
+        nativePlayerView.setPlayer(nativePlayer);
+        nativePlayerView.setVisibility(View.VISIBLE);
+        nativePlayerView.bringToFront();
+        mainContent.setVisibility(View.GONE);
+
+        nativePlayer.addListener(new androidx.media3.common.Player.Listener() {
+            private boolean watchTimerStarted = false;
+
+            @Override
+            public void onIsPlayingChanged(boolean isPlaying) {
+                if (isPlaying && !watchTimerStarted) {
+                    watchTimerStarted = true;
+                    startEpisodeWatchTimer();
+                }
+            }
+
+            @Override
+            public void onPlayerError(PlaybackException error) {
+                cancelEpisodeWatchTimer();
+                Log.e("AniWorld", "Media3-Wiedergabefehler: " + error.getErrorCodeName(), error);
+                runOnUiThread(() -> {
+                    if (nativePlayerView.getVisibility() == View.VISIBLE) {
+                        Toast.makeText(MainActivity.this,
+                                "Stream kann nicht abgespielt werden: " + error.getErrorCodeName(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
+
+        MediaSource mediaSource = new DefaultMediaSourceFactory(dataSourceFactory)
+                .createMediaSource(mediaItem);
+        nativePlayer.setMediaSource(mediaSource);
+        nativePlayer.prepare();
+        nativePlayer.setPlayWhenReady(true);
+        nativePlayerView.requestFocus();
+    }
+
+    private void releaseNativePlayer() {
+        if (nativePlayer != null) {
+            nativePlayerView.setPlayer(null);
+            nativePlayer.release();
+            nativePlayer = null;
+        }
+        nativePlayerView.setVisibility(View.GONE);
+    }
+
+
+    private int getHosterPriority(String title, String url) {
+        String value = ((title == null ? "" : title) + " "
+                + (url == null ? "" : url))
+                .toLowerCase(Locale.ROOT);
+
+        if (value.contains("voe")
+                || value.contains("arianathankspecial")) {
+            return 0;
+        }
+
+        if (value.contains("vidmoly")) {
+            return 1;
+        }
+
+        if (value.contains("doodstream")
+                || value.contains("dood.")) {
+            return 2;
+        }
+
+        if (value.contains("filemoon")) {
+            return 3;
+        }
+
+        return 99;
+    }
+
+    private void filterAndSortHosters(List<StreamHoster> hosters) {
+        // Nur die gewünschten vier Hoster behalten.
+        java.util.Iterator<StreamHoster> iterator = hosters.iterator();
+
+        while (iterator.hasNext()) {
+            StreamHoster hoster = iterator.next();
+
+            if (getHosterPriority(hoster.title, hoster.url) >= 99) {
+                iterator.remove();
+            }
+        }
+
+        // Erst nach Sprache, anschließend nach Hoster sortieren.
+        hosters.sort((a, b) -> {
+            int languageCompare = Integer.compare(
+                    a.languagePriority,
+                    b.languagePriority
+            );
+
+            if (languageCompare != 0) {
+                return languageCompare;
+            }
+
+            return Integer.compare(
+                    getHosterPriority(a.title, a.url),
+                    getHosterPriority(b.title, b.url)
+            );
+        });
+    }
+
 
     // ---------------------------------------------------------
     // WEBVIEW FULLSCREEN
@@ -3173,6 +3908,7 @@ public class MainActivity extends AppCompatActivity {
     private void openPlayer(String url) {
 
         cancelPosterBatch();
+        releaseNativePlayer();
 
         mainContent.setVisibility(View.GONE);
 
@@ -3195,6 +3931,8 @@ public class MainActivity extends AppCompatActivity {
 
             playerStartSequence = null;
         }
+
+        releaseNativePlayer();
 
         if (customView != null
                 && playerChromeClient != null) {
@@ -3344,6 +4082,7 @@ public class MainActivity extends AppCompatActivity {
             playerStartSequence = null;
         }
 
+        releaseNativePlayer();
         player.destroy();
 
         super.onDestroy();
