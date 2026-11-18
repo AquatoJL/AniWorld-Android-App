@@ -2702,7 +2702,7 @@ public class MainActivity extends AppCompatActivity {
 
                         String label = episode.seen
                                 ? "✓  " + episode.title
-                                : episode.title;
+                                : "○  " + episode.title;
 
                         addAction(
                                 label,
