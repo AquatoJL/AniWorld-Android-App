@@ -42,7 +42,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -84,8 +83,6 @@ import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.ui.PlayerView;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @androidx.media3.common.util.UnstableApi
 public class MainActivity extends AppCompatActivity {
@@ -2644,7 +2641,8 @@ public class MainActivity extends AppCompatActivity {
                     );
 
                     Show episode = new Show(title, fullUrl);
-                    episode.seen = a.hasClass("seen");
+                    Element tr = a.parent().parent();
+                    episode.seen = (tr != null && tr.hasClass("seen"));
 
                     episodes.add(episode);
                 }
@@ -2669,7 +2667,8 @@ public class MainActivity extends AppCompatActivity {
                         );
 
                         Show episode = new Show(title, fullUrl);
-                        episode.seen = a.hasClass("seen");
+                        Element tr = a.parent().parent();
+                        episode.seen = (tr != null && tr.hasClass("seen"));
 
                         episodes.add(episode);
                     }
@@ -2702,7 +2701,7 @@ public class MainActivity extends AppCompatActivity {
 
                         String label = episode.seen
                                 ? "✓  " + episode.title
-                                : "○  " + episode.title;
+                                : episode.title;
 
                         addAction(
                                 label,
