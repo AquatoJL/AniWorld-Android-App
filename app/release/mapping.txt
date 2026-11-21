@@ -3,8 +3,8 @@
 # min_api: 30
 # common_typos_disable
 # {"id":"com.android.tools.r8.mapping","version":"2.2"}
-# pg_map_id: 44d128656108e16231ae00ca7616a5c6442dd173105fe79cb6a665ba6854448c
-# pg_map_hash: SHA-256 44d128656108e16231ae00ca7616a5c6442dd173105fe79cb6a665ba6854448c
+# pg_map_id: 59df36ce55d101dbfe56d3beb27575fefcc94ea291eac4659a95d6d8a5166da3
+# pg_map_hash: SHA-256 59df36ce55d101dbfe56d3beb27575fefcc94ea291eac4659a95d6d8a5166da3
 android.app.UiModeManager$ContrastChangeListener -> android.app.UiModeManager$ContrastChangeListener:
 # {"id":"com.android.tools.r8.synthesized"}
     void <clinit>() -> <clinit>
@@ -931,10 +931,6 @@ androidx.activity.OnBackPressedCallback -> androidx.activity.c:
     1:3:void <init>(boolean):41:41 -> <init>
     4:5:void <init>(boolean):53:53 -> <init>
     6:13:void <init>(boolean):59:59 -> <init>
-    1:2:void <init>(boolean):55:55 -> a
-    1:2:void setEnabled(boolean):55 -> a
-    3:10:void <init>(boolean):56:56 -> a
-    3:10:void setEnabled(boolean):56 -> a
 androidx.activity.OnBackPressedDispatcher -> androidx.activity.OnBackPressedDispatcher:
 # {"id":"sourceFile","fileName":"OnBackPressedDispatcher.kt"}
     java.lang.Runnable fallbackOnBackPressed -> a
@@ -54349,7 +54345,6 @@ androidx.fragment.app.FragmentActivity -> androidx.fragment.app.c:
     45:55:boolean markState(androidx.fragment.app.FragmentManager,androidx.lifecycle.Lifecycle$State):779:779 -> w
     56:58:androidx.lifecycle.Lifecycle androidx.fragment.app.FragmentViewLifecycleOwner.getLifecycle():87:87 -> w
     56:58:boolean markState(androidx.fragment.app.FragmentManager,androidx.lifecycle.Lifecycle$State):780 -> w
-      # {"id":"com.android.tools.r8.rewriteFrame","conditions":["throws(Ljava/lang/NullPointerException;)"],"actions":["removeInnerFrames(1)"]}
     59:60:androidx.lifecycle.Lifecycle androidx.fragment.app.FragmentViewLifecycleOwner.getLifecycle():88:88 -> w
     59:60:boolean markState(androidx.fragment.app.FragmentManager,androidx.lifecycle.Lifecycle$State):780 -> w
     61:62:androidx.lifecycle.Lifecycle$State androidx.lifecycle.LifecycleRegistry.getCurrentState():98:98 -> w
@@ -56469,16 +56464,25 @@ androidx.fragment.app.FragmentManager -> androidx.fragment.app.d:
     9:14:void cleanupExec():1747:1747 -> e
     1:3:void updateOnBackPressedCallbackEnabled():632:632 -> e0
     4:12:void updateOnBackPressedCallbackEnabled():633:633 -> e0
-    13:17:void updateOnBackPressedCallbackEnabled():634:634 -> e0
-    18:19:void updateOnBackPressedCallbackEnabled():635:635 -> e0
-    20:20:void updateOnBackPressedCallbackEnabled():637:637 -> e0
-    21:22:void updateOnBackPressedCallbackEnabled():641:641 -> e0
-    23:35:int getBackStackEntryCount():887:887 -> e0
-    23:35:void updateOnBackPressedCallbackEnabled():641 -> e0
-    36:37:void updateOnBackPressedCallbackEnabled():641:641 -> e0
-    38:44:void updateOnBackPressedCallbackEnabled():642:642 -> e0
-    45:48:void updateOnBackPressedCallbackEnabled():641:641 -> e0
-    49:52:void updateOnBackPressedCallbackEnabled():637:637 -> e0
+    13:14:void updateOnBackPressedCallbackEnabled():634:634 -> e0
+    15:16:void androidx.activity.OnBackPressedCallback.setEnabled(boolean):55:55 -> e0
+    15:16:void updateOnBackPressedCallbackEnabled():634 -> e0
+      # {"id":"com.android.tools.r8.rewriteFrame","conditions":["throws(Ljava/lang/NullPointerException;)"],"actions":["removeInnerFrames(1)"]}
+    17:23:void androidx.activity.OnBackPressedCallback.setEnabled(boolean):56:56 -> e0
+    17:23:void updateOnBackPressedCallbackEnabled():634 -> e0
+    24:25:void updateOnBackPressedCallbackEnabled():635:635 -> e0
+    26:26:void updateOnBackPressedCallbackEnabled():637:637 -> e0
+    27:28:void updateOnBackPressedCallbackEnabled():641:641 -> e0
+    29:41:int getBackStackEntryCount():887:887 -> e0
+    29:41:void updateOnBackPressedCallbackEnabled():641 -> e0
+    42:43:void updateOnBackPressedCallbackEnabled():641:641 -> e0
+    44:50:void updateOnBackPressedCallbackEnabled():642:642 -> e0
+    51:52:void androidx.activity.OnBackPressedCallback.setEnabled(boolean):55:55 -> e0
+    51:52:void updateOnBackPressedCallbackEnabled():641 -> e0
+      # {"id":"com.android.tools.r8.rewriteFrame","conditions":["throws(Ljava/lang/NullPointerException;)"],"actions":["removeInnerFrames(1)"]}
+    53:60:void androidx.activity.OnBackPressedCallback.setEnabled(boolean):56:56 -> e0
+    53:60:void updateOnBackPressedCallbackEnabled():641 -> e0
+    61:64:void updateOnBackPressedCallbackEnabled():637:637 -> e0
     1:5:java.util.Set collectAllSpecialEffectsController():2034:2034 -> f
       # {"id":"com.android.tools.r8.residualsignature","signature":"()Ljava/util/HashSet;"}
     6:26:java.util.Set collectAllSpecialEffectsController():2036:2036 -> f
@@ -58517,8 +58521,8 @@ androidx.fragment.app.FragmentStateManager -> androidx.fragment.app.e:
     46:51:void destroyFragmentView():745 -> h
     52:54:androidx.lifecycle.Lifecycle androidx.fragment.app.FragmentViewLifecycleOwner.getLifecycle():87:87 -> h
     52:54:void androidx.fragment.app.Fragment.performDestroyView():3331 -> h
-      # {"id":"com.android.tools.r8.rewriteFrame","conditions":["throws(Ljava/lang/NullPointerException;)"],"actions":["removeInnerFrames(1)"]}
     52:54:void destroyFragmentView():745 -> h
+      # {"id":"com.android.tools.r8.rewriteFrame","conditions":["throws(Ljava/lang/NullPointerException;)"],"actions":["removeInnerFrames(2)"]}
     55:56:androidx.lifecycle.Lifecycle androidx.fragment.app.FragmentViewLifecycleOwner.getLifecycle():88:88 -> h
     55:56:void androidx.fragment.app.Fragment.performDestroyView():3331 -> h
     55:56:void destroyFragmentView():745 -> h
@@ -59344,49 +59348,49 @@ androidx.fragment.app.SpecialEffectsController$FragmentStateManagerOperation -> 
     31:38:void androidx.fragment.app.SpecialEffectsController$Operation.<init>(androidx.fragment.app.SpecialEffectsController$Operation$State,androidx.fragment.app.SpecialEffectsController$Operation$LifecycleImpact,androidx.fragment.app.Fragment,androidx.core.os.CancellationSignal):545:545 -> <init>
     31:38:void <init>(androidx.fragment.app.SpecialEffectsController$Operation$State,androidx.fragment.app.SpecialEffectsController$Operation$LifecycleImpact,androidx.fragment.app.FragmentStateManager,androidx.core.os.CancellationSignal):726 -> <init>
     39:41:void <init>(androidx.fragment.app.SpecialEffectsController$Operation$State,androidx.fragment.app.SpecialEffectsController$Operation$LifecycleImpact,androidx.fragment.app.FragmentStateManager,androidx.core.os.CancellationSignal):728:728 -> <init>
-    1:5:boolean androidx.fragment.app.SpecialEffectsController$Operation.isCanceled():583:583 -> a
-    1:5:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():610 -> a
-    6:7:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():613:613 -> a
-    8:15:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():614:614 -> a
+    1:7:boolean androidx.fragment.app.SpecialEffectsController$Operation.isCanceled():583:583 -> a
+    1:7:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():610 -> a
+    8:9:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():613:613 -> a
+    10:15:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():614:614 -> a
     16:19:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():615:615 -> a
-    20:26:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():617:617 -> a
-    27:42:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():618:618 -> a
-    43:44:void androidx.core.os.CancellationSignal.cancel():74:75 -> a
-    43:44:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    45:47:void androidx.core.os.CancellationSignal.cancel():75:75 -> a
-    45:47:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    48:49:void androidx.core.os.CancellationSignal.cancel():76:76 -> a
+    20:24:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():617:617 -> a
+    25:40:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():618:618 -> a
+    41:42:void androidx.core.os.CancellationSignal.cancel():74:75 -> a
+    41:42:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    43:45:void androidx.core.os.CancellationSignal.cancel():75:75 -> a
+    43:45:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    46:47:void androidx.core.os.CancellationSignal.cancel():76:76 -> a
+    46:47:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    48:49:void androidx.core.os.CancellationSignal.cancel():78:78 -> a
     48:49:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    50:51:void androidx.core.os.CancellationSignal.cancel():78:78 -> a
+    50:51:void androidx.core.os.CancellationSignal.cancel():79:79 -> a
     50:51:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    52:53:void androidx.core.os.CancellationSignal.cancel():79:79 -> a
+    52:53:void androidx.core.os.CancellationSignal.cancel():80:80 -> a
     52:53:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    54:55:void androidx.core.os.CancellationSignal.cancel():80:80 -> a
-    54:55:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    56:58:void androidx.core.os.CancellationSignal.cancel():82:82 -> a
-    56:58:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    59:63:void androidx.core.os.CancellationSignal.cancel():86:86 -> a
-    59:63:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    64:65:void androidx.core.os.CancellationSignal.cancel():92:93 -> a
+    54:56:void androidx.core.os.CancellationSignal.cancel():82:82 -> a
+    54:56:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    57:61:void androidx.core.os.CancellationSignal.cancel():86:86 -> a
+    57:61:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    62:63:void androidx.core.os.CancellationSignal.cancel():92:93 -> a
+    62:63:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    64:65:void androidx.core.os.CancellationSignal.cancel():93:94 -> a
     64:65:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    66:67:void androidx.core.os.CancellationSignal.cancel():93:94 -> a
+    66:67:void androidx.core.os.CancellationSignal.cancel():94:94 -> a
     66:67:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    68:69:void androidx.core.os.CancellationSignal.cancel():94:94 -> a
+    68:69:void androidx.core.os.CancellationSignal.cancel():95:96 -> a
     68:69:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    70:71:void androidx.core.os.CancellationSignal.cancel():95:96 -> a
-    70:71:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    72:75:void androidx.core.os.CancellationSignal.cancel():95:95 -> a
-    72:75:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    76:77:void androidx.core.os.CancellationSignal.cancel():92:93 -> a
+    70:73:void androidx.core.os.CancellationSignal.cancel():95:95 -> a
+    70:73:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    74:75:void androidx.core.os.CancellationSignal.cancel():92:93 -> a
+    74:75:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    76:77:void androidx.core.os.CancellationSignal.cancel():93:94 -> a
     76:77:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    78:79:void androidx.core.os.CancellationSignal.cancel():93:94 -> a
+    78:79:void androidx.core.os.CancellationSignal.cancel():94:94 -> a
     78:79:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    80:81:void androidx.core.os.CancellationSignal.cancel():94:94 -> a
-    80:81:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    82:87:void androidx.core.os.CancellationSignal.cancel():95:95 -> a
-    82:87:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
-    88:92:void androidx.core.os.CancellationSignal.cancel():82:82 -> a
-    88:92:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    80:85:void androidx.core.os.CancellationSignal.cancel():95:95 -> a
+    80:85:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
+    86:90:void androidx.core.os.CancellationSignal.cancel():82:82 -> a
+    86:90:void androidx.fragment.app.SpecialEffectsController$Operation.cancel():619 -> a
     1:5:void androidx.fragment.app.SpecialEffectsController$Operation.complete():704:704 -> b
     1:5:void complete():770 -> b
     6:11:void androidx.fragment.app.SpecialEffectsController$Operation.complete():707:707 -> b

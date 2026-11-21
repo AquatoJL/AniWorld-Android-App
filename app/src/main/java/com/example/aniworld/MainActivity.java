@@ -25,6 +25,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -95,6 +96,10 @@ public class MainActivity extends AppCompatActivity {
 
     private long lastLeftPress = 0;
     private long lastRightPress = 0;
+    private long firstExitBackPressAt = -1;
+    private int exitBackPressCount = 0;
+    private static final long EXIT_BACK_PRESS_INTERVAL_MS = 2_000;
+    private static final int EXIT_BACK_PRESS_COUNT = 3;
     private static final long DOUBLE_PRESS_TIME = 200;
     private static final long SEEK_NORMAL = 10_000;
     private static final long SEEK_DOUBLE = 70_000;
@@ -125,8 +130,13 @@ public class MainActivity extends AppCompatActivity {
 
     private LinearLayout catalog;
     private LinearLayout navigation;
+    private Button selectedNavigationButton;
+    private boolean suppressNavigationFocusLoad = false;
+    private boolean pendingFirstAnimeFocus = false;
     private TextView sectionTitle;
     private EditText search;
+    private LinearLayout recentSearches;
+    private Object searchBackCallback;
     private WebView player;
     private PlayerView nativePlayerView;
     private ExoPlayer nativePlayer;
@@ -137,8 +147,8 @@ public class MainActivity extends AppCompatActivity {
 
     private final List<Show> currentShows = new ArrayList<>();
 
-    private String currentUrl = BASE + "/animes-alphabet";
-    private String currentTitle = "Entdecken";
+    private String currentUrl = BASE + "/";
+    private String currentTitle = "Start";
 
     // 0 = Katalog, 1 = Staffeln, 2 = Episoden, 3 = Hoster
     private int level = 0;
@@ -269,6 +279,17 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
 
+        if (search != null
+                && search.getVisibility() == View.VISIBLE
+                && (event.getKeyCode() == KeyEvent.KEYCODE_BACK
+                || event.getKeyCode() == KeyEvent.KEYCODE_ESCAPE)) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN
+                    && event.getRepeatCount() == 0) {
+                closeSearch();
+            }
+            return true;
+        }
+
         if (nativePlayerView != null
                 && nativePlayerView.getVisibility() == View.VISIBLE
                 && nativePlayer != null) {
@@ -339,7 +360,84 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        if (event.getAction() == KeyEvent.ACTION_DOWN
+                && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP
+                && search != null
+                && search.getVisibility() == View.VISIBLE) {
+            View focused = getCurrentFocus();
+            if (isViewInside(focused, recentSearches)) {
+                search.requestFocus();
+                return true;
+            }
+            if (focused == search) {
+                closeSearch();
+                return true;
+            }
+        }
+
+        if (event.getAction() == KeyEvent.ACTION_DOWN
+                && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP
+                && level == 0
+                && selectedNavigationButton != null
+                && isViewInsideCatalog(getCurrentFocus())) {
+            selectedNavigationButton.requestFocus();
+            return true;
+        }
+
+        if (event.getAction() == KeyEvent.ACTION_DOWN
+                && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_DOWN
+                && level == 0
+                && isViewInsideNavigation(getCurrentFocus())) {
+            pendingFirstAnimeFocus = !focusFirstAnimeCard();
+            return true;
+        }
+
         return super.dispatchKeyEvent(event);
+    }
+
+    private boolean isViewInsideCatalog(View view) {
+        return isViewInside(view, catalog);
+    }
+
+    private boolean isViewInsideNavigation(View view) {
+        return isViewInside(view, navigation);
+    }
+
+    private boolean isViewInside(View view, View parent) {
+        View current = view;
+        while (current != null) {
+            if (current == parent) {
+                return true;
+            }
+            current = current.getParent() instanceof View
+                    ? (View) current.getParent()
+                    : null;
+        }
+        return false;
+    }
+
+    private boolean focusFirstAnimeCard() {
+        if (catalog == null) {
+            return false;
+        }
+
+        for (int i = 0; i < catalog.getChildCount(); i++) {
+            View child = catalog.getChildAt(i);
+            if (!(child instanceof HorizontalScrollView)) {
+                continue;
+            }
+
+            View row = ((HorizontalScrollView) child).getChildAt(0);
+            if (row instanceof android.view.ViewGroup
+                    && ((android.view.ViewGroup) row).getChildCount() > 0) {
+                View firstCard = ((android.view.ViewGroup) row).getChildAt(0);
+                if (firstCard.isFocusable()) {
+                    return firstCard.requestFocus();
+                }
+            }
+        }
+
+        return false;
     }
 
     @Override
@@ -356,6 +454,7 @@ public class MainActivity extends AppCompatActivity {
         navigation = findViewById(R.id.navigation);
         sectionTitle = findViewById(R.id.sectionTitle);
         search = findViewById(R.id.search);
+        recentSearches = findViewById(R.id.recentSearches);
         player = findViewById(R.id.playerWeb);
         nativePlayerView = findViewById(R.id.nativePlayerView);
 
@@ -383,6 +482,19 @@ public class MainActivity extends AppCompatActivity {
                             10
                     )
             );
+
+            if (!hasFocus && search.getVisibility() == View.VISIBLE) {
+                search.post(() -> {
+                    if (!search.hasFocus()
+                            && search.getVisibility() == View.VISIBLE
+                            && !isViewInside(
+                                    getCurrentFocus(),
+                                    recentSearches
+                            )) {
+                        closeSearch();
+                    }
+                });
+            }
         });
 
         getOnBackPressedDispatcher().addCallback(
@@ -394,6 +506,11 @@ public class MainActivity extends AppCompatActivity {
                         if (customView != null
                                 && playerChromeClient != null) {
                             playerChromeClient.onHideCustomView();
+                            return;
+                        }
+
+                        if (search.getVisibility() == View.VISIBLE) {
+                            closeSearch();
                             return;
                         }
 
@@ -419,8 +536,21 @@ public class MainActivity extends AppCompatActivity {
                             return;
                         }
 
-                        setEnabled(false);
-                        getOnBackPressedDispatcher().onBackPressed();
+                        long now = SystemClock.uptimeMillis();
+                        if (firstExitBackPressAt < 0
+                                || now - firstExitBackPressAt
+                                > EXIT_BACK_PRESS_INTERVAL_MS) {
+                            firstExitBackPressAt = now;
+                            exitBackPressCount = 1;
+                        } else {
+                            exitBackPressCount++;
+                        }
+
+                        if (exitBackPressCount >= EXIT_BACK_PRESS_COUNT) {
+                            finish();
+                            firstExitBackPressAt = -1;
+                            exitBackPressCount = 0;
+                        }
                     }
                 }
         );
@@ -640,7 +770,7 @@ public class MainActivity extends AppCompatActivity {
             return false;
         });
 
-        loadCatalog(BASE + "/animes-alphabet", "Alle Anime");
+        loadCatalog(BASE + "/", "Start");
     }
 
     // ---------------------------------------------------------
@@ -811,11 +941,37 @@ public class MainActivity extends AppCompatActivity {
 
         String[][] items = {
                 {"Start", BASE + "/"},
+                {"Benachrichtigungen", BASE + "/account/notifications"},
                 {"Neue Folgen", BASE + "/neue-episoden"},
                 {"Beliebt", BASE + "/beliebte-animes"},
-                {"Alle Anime", BASE + "/animes-alphabet"},
-                {"Benachrichtigungen", BASE + "/account/notifications"}
+                {"Alle Anime", BASE + "/animes-alphabet"}
         };
+
+        LinearLayout accountNavigation = findViewById(R.id.accountNavigation);
+
+        ImageButton searchButton = new ImageButton(this);
+        searchButton.setImageResource(android.R.drawable.ic_menu_search);
+        searchButton.setColorFilter(Color.WHITE);
+        searchButton.setContentDescription("Suche");
+        searchButton.setBackgroundColor(Color.TRANSPARENT);
+        searchButton.setFocusable(true);
+
+        LinearLayout.LayoutParams searchLp =
+                new LinearLayout.LayoutParams(dp(32), dp(32));
+        searchLp.setMargins(0, 0, dp(5), 0);
+        navigation.addView(searchButton, searchLp);
+
+        searchButton.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) {
+                searchButton.post(() -> {
+                    if (searchButton.hasFocus()) {
+                        showSearch();
+                    }
+                });
+            }
+        });
+
+        searchButton.setOnClickListener(v -> showSearch());
 
         for (String[] item : items) {
 
@@ -824,12 +980,18 @@ public class MainActivity extends AppCompatActivity {
             b.setText(item[0]);
             b.setAllCaps(false);
             b.setTextColor(Color.WHITE);
-            b.setTextSize(14);
+            b.setTextSize(12);
             b.setTypeface(null, Typeface.BOLD);
+            b.setIncludeFontPadding(false);
             b.setGravity(Gravity.CENTER);
+            b.setPadding(dp(8), 0, dp(8), 0);
+            b.setMinWidth(0);
+            b.setMinimumWidth(0);
+            b.setMinHeight(0);
+            b.setMinimumHeight(0);
 
             b.setBackground(
-                    round(0xFF252525, 0xFF444444, 24)
+                    round(0xFF101010, 0xFF101010, 24)
             );
 
             b.setFocusable(true);
@@ -837,28 +999,39 @@ public class MainActivity extends AppCompatActivity {
             LinearLayout.LayoutParams lp =
                     new LinearLayout.LayoutParams(
                             -2,
-                            dp(42)
+                            dp(32)
                     );
 
-            lp.setMargins(0, 0, dp(10), 0);
+            lp.setMargins(0, 0, dp(5), 0);
 
             navigation.addView(b, lp);
 
             b.setOnClickListener(v -> {
+                selectNavigationButton(b);
                 level = 0;
                 loadCatalog(item[1], item[0]);
             });
 
             b.setOnFocusChangeListener((v, hasFocus) -> {
+                if (hasFocus) {
+                    selectNavigationButton(b);
+                } else if (selectedNavigationButton != b) {
+                    b.setBackground(round(0xFF101010, 0xFF101010, 24));
+                }
 
-                b.setBackground(
-                        round(
-                                hasFocus ? ORANGE : 0xFF252525,
-                                hasFocus ? ORANGE : 0xFF444444,
-                                24
-                        )
-                );
+                if (hasFocus
+                        && !suppressNavigationFocusLoad
+                        && !item[1].equals(currentUrl)) {
+                    level = 0;
+                    loadCatalog(item[1], item[0]);
+                }
             });
+
+            if ("Start".equals(item[0])) {
+                b.setFocusedByDefault(true);
+                selectNavigationButton(b);
+                b.requestFocus();
+            }
         }
 
         Button accountButton = new Button(this);
@@ -866,11 +1039,18 @@ public class MainActivity extends AppCompatActivity {
         accountButton.setText("Account");
         accountButton.setAllCaps(false);
         accountButton.setTextColor(Color.WHITE);
-        accountButton.setTextSize(14);
+        accountButton.setTextSize(12);
         accountButton.setTypeface(null, Typeface.BOLD);
+        accountButton.setIncludeFontPadding(false);
+        accountButton.setGravity(Gravity.CENTER);
+        accountButton.setPadding(dp(8), 0, dp(8), 0);
+        accountButton.setMinWidth(0);
+        accountButton.setMinimumWidth(0);
+        accountButton.setMinHeight(0);
+        accountButton.setMinimumHeight(0);
 
         accountButton.setBackground(
-                round(0xFF252525, 0xFF444444, 24)
+                round(0xFF101010, 0xFF101010, 24)
         );
 
         accountButton.setFocusable(true);
@@ -878,19 +1058,19 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout.LayoutParams accountLp =
                 new LinearLayout.LayoutParams(
                         -2,
-                        dp(42)
+                        dp(32)
                 );
 
-        accountLp.setMargins(0, 0, dp(10), 0);
+        accountLp.setMargins(0, 0, dp(5), 0);
 
-        navigation.addView(accountButton, accountLp);
+        accountNavigation.addView(accountButton, accountLp);
 
         accountButton.setOnFocusChangeListener((v, hasFocus) -> {
 
             accountButton.setBackground(
                     round(
-                            hasFocus ? ORANGE : 0xFF252525,
-                            hasFocus ? ORANGE : 0xFF444444,
+                            hasFocus ? ORANGE : 0xFF101010,
+                            hasFocus ? ORANGE : 0xFF101010,
                             24
                     )
             );
@@ -899,6 +1079,187 @@ public class MainActivity extends AppCompatActivity {
         accountButton.setOnClickListener(v ->
                 openPlayer(BASE + "/account")
         );
+    }
+
+    private List<String> getRecentSearchQueries() {
+        SharedPreferences preferences =
+                getSharedPreferences("search_history", MODE_PRIVATE);
+        String saved = preferences.getString("queries", "[]");
+        List<String> queries = new ArrayList<>();
+
+        try {
+            org.json.JSONArray array = new org.json.JSONArray(saved);
+            for (int i = 0; i < array.length() && queries.size() < 5; i++) {
+                String query = array.optString(i, "").trim();
+                if (!query.isEmpty()) {
+                    queries.add(query);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return queries;
+    }
+
+    private void rememberSearch(String query) {
+        String trimmed = query == null ? "" : query.trim();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+
+        List<String> queries = getRecentSearchQueries();
+        queries.removeIf(existing -> existing.equalsIgnoreCase(trimmed));
+        queries.add(0, trimmed);
+        while (queries.size() > 5) {
+            queries.remove(queries.size() - 1);
+        }
+
+        getSharedPreferences("search_history", MODE_PRIVATE)
+                .edit()
+                .putString("queries", new org.json.JSONArray(queries).toString())
+                .apply();
+    }
+
+    private void updateRecentSearches() {
+        if (recentSearches == null) {
+            return;
+        }
+
+        recentSearches.removeAllViews();
+        List<String> queries = getRecentSearchQueries();
+        if (queries.isEmpty()) {
+            recentSearches.setVisibility(View.GONE);
+            return;
+        }
+
+        recentSearches.setVisibility(View.VISIBLE);
+
+        TextView heading = new TextView(this);
+        heading.setText("Letzte Suchen");
+        heading.setTextColor(0xFFAAAAAA);
+        heading.setTextSize(14);
+        heading.setPadding(dp(8), dp(4), dp(8), dp(8));
+        recentSearches.addView(heading);
+
+        for (String query : queries) {
+            TextView item = new TextView(this);
+            item.setText(query);
+            item.setTextColor(Color.WHITE);
+            item.setTextSize(15);
+            item.setGravity(Gravity.CENTER_VERTICAL);
+            item.setSingleLine(true);
+            item.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            item.setPadding(dp(12), 0, dp(12), 0);
+            item.setFocusable(true);
+            item.setClickable(true);
+            item.setBackground(round(0xFF101010, 0xFF101010, 8));
+
+            item.setOnFocusChangeListener((view, hasFocus) ->
+                    item.setBackground(round(
+                            hasFocus ? ORANGE : 0xFF101010,
+                            hasFocus ? ORANGE : 0xFF101010,
+                            8
+                    ))
+            );
+
+            item.setOnClickListener(view -> {
+                search.setText(query);
+                search.setSelection(search.length());
+                search.requestFocus();
+                search(query);
+            });
+
+            LinearLayout.LayoutParams itemParams =
+                    new LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            dp(42)
+                    );
+            itemParams.setMargins(0, 0, 0, dp(4));
+            recentSearches.addView(item, itemParams);
+        }
+    }
+
+    private void showSearch() {
+        search.setVisibility(View.VISIBLE);
+        sectionTitle.setVisibility(View.GONE);
+        catalog.setVisibility(View.GONE);
+        updateRecentSearches();
+
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && searchBackCallback == null) {
+            searchBackCallback =
+                    (android.window.OnBackInvokedCallback) this::closeSearch;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
+                    (android.window.OnBackInvokedCallback) searchBackCallback
+            );
+        }
+
+        search.requestFocus();
+    }
+
+    private void closeSearch() {
+        if (search == null || search.getVisibility() != View.VISIBLE) {
+            return;
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && searchBackCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(
+                    (android.window.OnBackInvokedCallback) searchBackCallback
+            );
+            searchBackCallback = null;
+        }
+
+        android.view.inputmethod.InputMethodManager inputMethodManager =
+                (android.view.inputmethod.InputMethodManager)
+                        getSystemService(INPUT_METHOD_SERVICE);
+        if (inputMethodManager != null) {
+            inputMethodManager.hideSoftInputFromWindow(
+                    search.getWindowToken(),
+                    0
+            );
+        }
+
+        View focusToRestore = getCurrentFocus();
+        search.clearFocus();
+        search.setVisibility(View.GONE);
+        recentSearches.setVisibility(View.GONE);
+        sectionTitle.setVisibility(View.VISIBLE);
+        catalog.setVisibility(View.VISIBLE);
+
+        if (focusToRestore != null
+                && focusToRestore != search
+                && focusToRestore.isFocusable()
+                && focusToRestore.getVisibility() == View.VISIBLE
+                && !isViewInside(focusToRestore, recentSearches)) {
+            focusToRestore.requestFocus();
+        } else {
+            focusSelectedNavigationButtonWithoutLoading();
+        }
+    }
+
+    private void focusSelectedNavigationButtonWithoutLoading() {
+        if (selectedNavigationButton == null) {
+            return;
+        }
+
+        boolean previousValue = suppressNavigationFocusLoad;
+        suppressNavigationFocusLoad = true;
+        selectedNavigationButton.requestFocus();
+        suppressNavigationFocusLoad = previousValue;
+    }
+
+    private void selectNavigationButton(Button button) {
+        if (selectedNavigationButton != null
+                && selectedNavigationButton != button) {
+            selectedNavigationButton.setBackground(
+                    round(0xFF101010, 0xFF101010, 24)
+            );
+        }
+
+        selectedNavigationButton = button;
+        button.setBackground(round(ORANGE, ORANGE, 24));
     }
 
     // ---------------------------------------------------------
@@ -2033,6 +2394,7 @@ public class MainActivity extends AppCompatActivity {
                 currentShows.addAll(data);
 
                 if (err != null) {
+                    pendingFirstAnimeFocus = false;
                     addMessage(err);
                 } else {
                     renderShows(data);
@@ -2055,6 +2417,8 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        rememberSearch(query);
+        closeSearch();
         level = 0;
 
         currentUrl = BASE + "/animes-alphabet";
@@ -2158,6 +2522,7 @@ public class MainActivity extends AppCompatActivity {
     private void renderShows(List<Show> shows) {
 
         if (shows == null || shows.isEmpty()) {
+            pendingFirstAnimeFocus = false;
             addMessage("Keine Anime gefunden.");
             return;
         }
@@ -2182,6 +2547,7 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.TOP);
+        row.setPadding(dp(12), 0, 0, 0);
         row.setClipChildren(false);
         row.setClipToPadding(false);
 
@@ -2223,7 +2589,7 @@ public class MainActivity extends AppCompatActivity {
                 while (nextIndex[0] < end) {
 
                     Show show = shows.get(nextIndex[0]);
-                    LinearLayout card = createShowCard(show);
+                    LinearLayout card = createShowCard(show, horizontalScroll);
 
                     row.addView(
                             card,
@@ -2243,9 +2609,25 @@ public class MainActivity extends AppCompatActivity {
                         )
                 );
 
+                if (pendingFirstAnimeFocus
+                        && isViewInsideNavigation(getCurrentFocus())
+                        && row.getChildCount() > 0) {
+                    pendingFirstAnimeFocus = false;
+                    horizontalScroll.post(() -> {
+                        if (isViewInsideNavigation(getCurrentFocus())
+                                && row.getChildCount() > 0) {
+                            row.getChildAt(0).requestFocus();
+                        }
+                    });
+                }
+
                 if (nextIndex[0] < shows.size()) {
                     mainHandler.postDelayed(this, 16);
                 } else {
+                    View endSpacer = new View(MainActivity.this);
+                    row.addView(endSpacer, new LinearLayout.LayoutParams(
+                            horizontalScroll.getWidth(), 1
+                    ));
                     logInfo("Alle Anime-Karten erstellt: " + shows.size());
                 }
             }
@@ -2254,7 +2636,7 @@ public class MainActivity extends AppCompatActivity {
         mainHandler.post(renderNextBatch);
     }
 
-    private LinearLayout createShowCard(Show show) {
+    private LinearLayout createShowCard(Show show, HorizontalScrollView horizontalScroll) {
 
         LinearLayout card = new LinearLayout(this);
 
@@ -2371,8 +2753,13 @@ public class MainActivity extends AppCompatActivity {
                                 8
                         )
                 );
-                card.setScaleX(1.04f);
-                card.setScaleY(1.04f);
+                card.setScaleX(1.12f);
+                card.setScaleY(1.12f);
+                card.setElevation(dp(8));
+                card.post(() -> horizontalScroll.smoothScrollTo(
+                        Math.max(0, card.getLeft() - dp(12)),
+                        horizontalScroll.getScrollY()
+                ));
 
             } else {
                 card.setBackground(
@@ -2476,6 +2863,7 @@ public class MainActivity extends AppCompatActivity {
         sectionTitle.setText(show.title);
         catalog.removeAllViews();
         addMessage("Lade Staffeln …");
+        focusSelectedNavigationButtonWithoutLoading();
 
         io.execute(() -> {
 
@@ -2597,6 +2985,7 @@ public class MainActivity extends AppCompatActivity {
         sectionTitle.setText(season.title);
         catalog.removeAllViews();
         addMessage("Lade Episoden …");
+        focusSelectedNavigationButtonWithoutLoading();
 
         io.execute(() -> {
 
@@ -2914,6 +3303,7 @@ public class MainActivity extends AppCompatActivity {
         sectionTitle.setText(episode.title);
 
         addMessage("Suche Video-Hoster …");
+        focusSelectedNavigationButtonWithoutLoading();
 
         io.execute(() -> {
 
