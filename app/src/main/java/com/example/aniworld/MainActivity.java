@@ -33,6 +33,7 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -258,6 +259,7 @@ public class MainActivity extends AppCompatActivity {
         final AtomicInteger memoryHits = new AtomicInteger(0);
         final AtomicInteger failed = new AtomicInteger(0);
         volatile boolean cancelled = false;
+        volatile boolean persistentDownload = false;
         final List<Future<?>> tasks =
                 Collections.synchronizedList(new ArrayList<>());
         final List<HttpURLConnection> connections =
@@ -798,6 +800,18 @@ public class MainActivity extends AppCompatActivity {
     // ---------------------------------------------------------
 
     private void checkForAppUpdate() {
+        checkForAppUpdate(false);
+    }
+
+    private void checkForAppUpdate(boolean manual) {
+        if (manual) {
+            Toast.makeText(
+                    this,
+                    "Suche nach Updates …",
+                    Toast.LENGTH_SHORT
+            ).show();
+        }
+
         updateExecutor.execute(() -> {
             File updateFile = null;
 
@@ -816,7 +830,7 @@ public class MainActivity extends AppCompatActivity {
 
                 SharedPreferences preferences =
                         getSharedPreferences("app_update", MODE_PRIVATE);
-                if (remoteSha.equals(
+                if (!manual && remoteSha.equals(
                         preferences.getString("last_checked_sha", "")
                 )) {
                     return;
@@ -856,6 +870,13 @@ public class MainActivity extends AppCompatActivity {
                             .putString("last_checked_sha", remoteSha)
                             .apply();
                     updateFile.delete();
+                    if (manual) {
+                        runOnUiThread(() -> Toast.makeText(
+                                MainActivity.this,
+                                "Keine Updates verfügbar.",
+                                Toast.LENGTH_SHORT
+                        ).show());
+                    }
                     return;
                 }
 
@@ -894,6 +915,14 @@ public class MainActivity extends AppCompatActivity {
                     updateFile.delete();
                 }
                 Log.w("AniWorldUpdate", "Update-Prüfung fehlgeschlagen", e);
+                if (manual) {
+                    runOnUiThread(() -> Toast.makeText(
+                            MainActivity.this,
+                            "Update-Prüfung fehlgeschlagen: "
+                                    + e.getMessage(),
+                            Toast.LENGTH_LONG
+                    ).show());
+                }
             }
         });
     }
@@ -1431,9 +1460,33 @@ public class MainActivity extends AppCompatActivity {
             );
         });
 
-        accountButton.setOnClickListener(v ->
-                openPlayer(BASE + "/account")
-        );
+        accountButton.setOnClickListener(v -> {
+            PopupMenu menu = new PopupMenu(MainActivity.this, accountButton);
+            menu.getMenu().add(0, 1, 0, "AniWorld Seite aufrufen");
+            menu.getMenu().add(0, 2, 1, "Check Updates");
+            menu.getMenu().add(
+                    0,
+                    3,
+                    2,
+                    "Alle Poster herunterladen und für immer speichern"
+            );
+            menu.setOnMenuItemClickListener(item -> {
+                switch (item.getItemId()) {
+                    case 1:
+                        openPlayer(BASE);
+                        return true;
+                    case 2:
+                        checkForAppUpdate(true);
+                        return true;
+                    case 3:
+                        downloadAllPosters();
+                        return true;
+                    default:
+                        return false;
+                }
+            });
+            menu.show();
+        });
     }
 
     private List<String> getRecentSearchQueries() {
@@ -2330,7 +2383,7 @@ public class MainActivity extends AppCompatActivity {
 
         PosterBatch batch = activePosterBatch;
 
-        if (batch == null || batch.cancelled) {
+        if (batch == null || batch.cancelled || batch.persistentDownload) {
             return;
         }
 
@@ -2403,7 +2456,9 @@ public class MainActivity extends AppCompatActivity {
             Show show,
             PosterBatch batch
     ) {
-        imageView.setTag(show.url);
+        if (imageView != null) {
+            imageView.setTag(show.url);
+        }
 
         synchronized (batch.tasks) {
 
@@ -2596,21 +2651,23 @@ public class MainActivity extends AppCompatActivity {
 
                     Bitmap finalBitmap = bitmap;
 
-                    mainHandler.post(() -> {
-                        if (batch.cancelled) {
-                            return;
-                        }
-                        Object tag = imageView.getTag();
-
-                        if (tag != null && tag.equals(show.url)) {
-                            imageView.setImageBitmap(finalBitmap);
-                            imageView.setVisibility(View.VISIBLE);
-
-                            if (placeholder != null) {
-                                placeholder.setVisibility(View.GONE);
+                    if (imageView != null) {
+                        mainHandler.post(() -> {
+                            if (batch.cancelled) {
+                                return;
                             }
-                        }
-                    });
+                            Object tag = imageView.getTag();
+
+                            if (tag != null && tag.equals(show.url)) {
+                                imageView.setImageBitmap(finalBitmap);
+                                imageView.setVisibility(View.VISIBLE);
+
+                                if (placeholder != null) {
+                                    placeholder.setVisibility(View.GONE);
+                                }
+                            }
+                        });
+                    }
 
                     if (downloaded) {
                         batch.downloaded.incrementAndGet();
@@ -2673,7 +2730,83 @@ public class MainActivity extends AppCompatActivity {
                     + batch.memoryHits.get()
                     + " | Fehler: " + batch.failed.get()
             );
+
+            if (batch.persistentDownload) {
+                if (activePosterBatch == batch) {
+                    activePosterBatch = null;
+                }
+                mainHandler.post(() -> Toast.makeText(
+                        MainActivity.this,
+                        "Poster-Download fertig. Fehler: "
+                                + batch.failed.get(),
+                        Toast.LENGTH_LONG
+                ).show());
+            }
         }
+    }
+
+    private void downloadAllPosters() {
+        PosterBatch currentBatch = activePosterBatch;
+        if (currentBatch != null
+                && currentBatch.persistentDownload
+                && !currentBatch.cancelled) {
+            Toast.makeText(this, "Poster-Download läuft bereits.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Toast.makeText(
+                this,
+                "Lade Anime-Katalog für den Poster-Download …",
+                Toast.LENGTH_SHORT
+        ).show();
+
+        io.execute(() -> {
+            try {
+                String catalogUrl = BASE + "/animes-alphabet";
+                Document doc = Jsoup.connect(catalogUrl)
+                        .cookies(getCookiesFor(catalogUrl))
+                        .userAgent(
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+                        )
+                        .header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+                        .referrer(BASE + "/")
+                        .timeout(30000)
+                        .get();
+                List<Show> shows = extractShowsFromDocument(doc, false);
+
+                runOnUiThread(() -> {
+                    if (shows.isEmpty()) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "Im Anime-Katalog wurden keine Poster gefunden.",
+                                Toast.LENGTH_LONG
+                        ).show();
+                        return;
+                    }
+
+                    cancelPosterBatch();
+                    PosterBatch batch = new PosterBatch(shows.size());
+                    batch.persistentDownload = true;
+                    activePosterBatch = batch;
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Lade " + shows.size()
+                                    + " Poster dauerhaft herunter …",
+                            Toast.LENGTH_LONG
+                    ).show();
+                    for (Show show : shows) {
+                        loadPoster(null, null, show, batch);
+                    }
+                });
+            } catch (Exception e) {
+                Log.e("AniWorld", "Poster-Katalog konnte nicht geladen werden", e);
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        "Poster-Katalog konnte nicht geladen werden.",
+                        Toast.LENGTH_LONG
+                ).show());
+            }
+        });
     }
 
     // ---------------------------------------------------------
