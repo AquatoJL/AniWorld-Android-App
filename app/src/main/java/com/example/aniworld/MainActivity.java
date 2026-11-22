@@ -844,8 +844,16 @@ public class MainActivity extends AppCompatActivity {
                 updateFile = new File(updateDirectory, "aniworld-update.apk");
                 downloadUpdateApk(downloadUrl, updateFile, expectedSize);
 
-                if (!remoteSha.equalsIgnoreCase(computeGitHubBlobSha1(updateFile))) {
-                    throw new IOException("Die heruntergeladene APK stimmt nicht mit GitHub überein");
+                String downloadedSha = computeGitHubBlobSha1(updateFile);
+                boolean blobShaMatches =
+                        remoteSha.equalsIgnoreCase(downloadedSha);
+                if (!blobShaMatches) {
+                    Log.w(
+                            "AniWorldUpdate",
+                            "GitHub-Blob-SHA weicht ab; prüfe Paket, Version "
+                                    + "und Signatur der APK. GitHub: "
+                                    + remoteSha + " | Download: " + downloadedSha
+                    );
                 }
 
                 PackageManager packageManager = getPackageManager();
@@ -897,6 +905,14 @@ public class MainActivity extends AppCompatActivity {
                             Toast.LENGTH_LONG
                     ).show());
                     return;
+                }
+
+                if (!blobShaMatches) {
+                    Log.i(
+                            "AniWorldUpdate",
+                            "APK trotz abweichendem Blob-SHA anhand von "
+                                    + "Paketname, Version und Signatur verifiziert"
+                    );
                 }
 
                 File verifiedUpdateFile = updateFile;
@@ -1374,9 +1390,7 @@ public class MainActivity extends AppCompatActivity {
             b.setMinHeight(0);
             b.setMinimumHeight(0);
 
-            b.setBackground(
-                    round(0xFF101010, 0xFF101010, 24)
-            );
+            b.setBackground(navigationPill(Color.BLACK));
 
             b.setFocusable(true);
 
@@ -1400,7 +1414,7 @@ public class MainActivity extends AppCompatActivity {
                 if (hasFocus) {
                     selectNavigationButton(b);
                 } else if (selectedNavigationButton != b) {
-                    b.setBackground(round(0xFF101010, 0xFF101010, 24));
+                    b.setBackground(navigationPill(Color.BLACK));
                 }
 
                 if (hasFocus
@@ -1434,7 +1448,7 @@ public class MainActivity extends AppCompatActivity {
         accountButton.setMinimumHeight(0);
 
         accountButton.setBackground(
-                round(0xFF101010, 0xFF101010, 24)
+                navigationPill(Color.BLACK)
         );
 
         accountButton.setFocusable(true);
@@ -1452,11 +1466,7 @@ public class MainActivity extends AppCompatActivity {
         accountButton.setOnFocusChangeListener((v, hasFocus) -> {
 
             accountButton.setBackground(
-                    round(
-                            hasFocus ? ORANGE : 0xFF101010,
-                            hasFocus ? ORANGE : 0xFF101010,
-                            24
-                    )
+                    navigationPill(hasFocus ? ORANGE : Color.BLACK)
             );
         });
 
@@ -1661,13 +1671,11 @@ public class MainActivity extends AppCompatActivity {
     private void selectNavigationButton(Button button) {
         if (selectedNavigationButton != null
                 && selectedNavigationButton != button) {
-            selectedNavigationButton.setBackground(
-                    round(0xFF101010, 0xFF101010, 24)
-            );
+            selectedNavigationButton.setBackground(navigationPill(Color.BLACK));
         }
 
         selectedNavigationButton = button;
-        button.setBackground(round(ORANGE, ORANGE, 24));
+        button.setBackground(navigationPill(ORANGE));
     }
 
     // ---------------------------------------------------------
@@ -1687,6 +1695,13 @@ public class MainActivity extends AppCompatActivity {
         d.setStroke(dp(1), stroke);
 
         return d;
+    }
+
+    private GradientDrawable navigationPill(int color) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(color);
+        background.setCornerRadius(dp(24));
+        return background;
     }
 
     private int dp(float value) {
