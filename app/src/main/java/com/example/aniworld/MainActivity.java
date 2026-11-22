@@ -2426,8 +2426,8 @@ public class MainActivity extends AppCompatActivity {
                 bounds
         );
 
-        int reqWidth = dp(150);
-        int reqHeight = dp(225);
+        int reqWidth = dp(165);
+        int reqHeight = dp(248);
 
         int sampleSize = 1;
 
@@ -3199,8 +3199,8 @@ public class MainActivity extends AppCompatActivity {
 
         LinearLayout.LayoutParams imageParams =
                 new LinearLayout.LayoutParams(
-                        dp(150),
-                        dp(225)
+                        dp(165),
+                        dp(248)
                 );
 
         card.addView(posterFrame, imageParams);
@@ -3215,18 +3215,18 @@ public class MainActivity extends AppCompatActivity {
         title.setTypeface(null, Typeface.BOLD);
         title.setGravity(Gravity.TOP | Gravity.START);
         title.setPadding(
-                dp(5),
-                dp(10),
-                dp(5),
-                dp(8)
+                dp(6),
+                dp(8),
+                dp(6),
+                dp(6)
         );
-        title.setMaxLines(2);
+        title.setMaxLines(3);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
 
         LinearLayout.LayoutParams titleParams =
                 new LinearLayout.LayoutParams(
-                        dp(150),
-                        dp(52)
+                        dp(165),
+                        dp(76)
                 );
 
         card.addView(title, titleParams);
@@ -3271,8 +3271,8 @@ public class MainActivity extends AppCompatActivity {
 
         LinearLayout.LayoutParams cardParams =
                 new LinearLayout.LayoutParams(
-                        dp(150),
-                        dp(277)
+                        dp(165),
+                        dp(324)
                 );
 
         cardParams.setMargins(
