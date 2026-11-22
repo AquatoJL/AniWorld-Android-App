@@ -98,7 +98,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String BASE = "https://aniworld.to";
     private static final String UPDATE_METADATA_URL =
-            "https://api.github.com/repos/AquatoJL/AniWorld-Android-App/contents/app-release.apk?ref=main";
+            "https://api.github.com/repos/AquatoJL/AniWorld-Android-App/contents/app/release/app-release.apk?ref=main";
     private static final int REQUEST_INSTALL_PERMISSION = 7101;
     private static final int REQUEST_INSTALL_APK = 7102;
     private static final long MAX_UPDATE_APK_SIZE = 250L * 1024L * 1024L;
@@ -1376,6 +1376,7 @@ public class MainActivity extends AppCompatActivity {
         for (String[] item : items) {
 
             Button b = new Button(this);
+            prepareNavigationButton(b);
 
             b.setText(item[0]);
             b.setAllCaps(false);
@@ -1390,7 +1391,7 @@ public class MainActivity extends AppCompatActivity {
             b.setMinHeight(0);
             b.setMinimumHeight(0);
 
-            b.setBackground(navigationPill(Color.BLACK));
+            b.setBackground(navigationPill(0xFF101010));
 
             b.setFocusable(true);
 
@@ -1414,7 +1415,7 @@ public class MainActivity extends AppCompatActivity {
                 if (hasFocus) {
                     selectNavigationButton(b);
                 } else if (selectedNavigationButton != b) {
-                    b.setBackground(navigationPill(Color.BLACK));
+                    b.setBackground(navigationPill(0xFF101010));
                 }
 
                 if (hasFocus
@@ -1433,6 +1434,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         Button accountButton = new Button(this);
+        prepareNavigationButton(accountButton);
 
         accountButton.setText("Account");
         accountButton.setAllCaps(false);
@@ -1448,7 +1450,7 @@ public class MainActivity extends AppCompatActivity {
         accountButton.setMinimumHeight(0);
 
         accountButton.setBackground(
-                navigationPill(Color.BLACK)
+                navigationPill(0xFF101010)
         );
 
         accountButton.setFocusable(true);
@@ -1466,7 +1468,7 @@ public class MainActivity extends AppCompatActivity {
         accountButton.setOnFocusChangeListener((v, hasFocus) -> {
 
             accountButton.setBackground(
-                    navigationPill(hasFocus ? ORANGE : Color.BLACK)
+                    navigationPill(hasFocus ? ORANGE : 0xFF101010)
             );
         });
 
@@ -1671,7 +1673,7 @@ public class MainActivity extends AppCompatActivity {
     private void selectNavigationButton(Button button) {
         if (selectedNavigationButton != null
                 && selectedNavigationButton != button) {
-            selectedNavigationButton.setBackground(navigationPill(Color.BLACK));
+            selectedNavigationButton.setBackground(navigationPill(0xFF101010));
         }
 
         selectedNavigationButton = button;
@@ -1702,6 +1704,12 @@ public class MainActivity extends AppCompatActivity {
         background.setColor(color);
         background.setCornerRadius(dp(24));
         return background;
+    }
+
+    private void prepareNavigationButton(Button button) {
+        button.setBackgroundTintList(null);
+        button.setElevation(0f);
+        button.setStateListAnimator(null);
     }
 
     private int dp(float value) {
