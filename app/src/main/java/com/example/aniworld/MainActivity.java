@@ -881,7 +881,11 @@ public class MainActivity extends AppCompatActivity {
                     if (manual) {
                         runOnUiThread(() -> Toast.makeText(
                                 MainActivity.this,
-                                "Keine Updates verfügbar.",
+                                "Keine Updates verfügbar (installiert: "
+                                        + installedPackage.getLongVersionCode()
+                                        + ", GitHub: "
+                                        + remotePackage.getLongVersionCode()
+                                        + ").",
                                 Toast.LENGTH_SHORT
                         ).show());
                     }
