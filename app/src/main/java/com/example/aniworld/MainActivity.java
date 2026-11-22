@@ -10,6 +10,12 @@ import android.view.KeyEvent;
 import android.view.View;
 
 import android.content.SharedPreferences;
+import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.net.Uri;
+import android.provider.Settings;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -70,6 +76,7 @@ import android.webkit.WebResourceResponse;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -89,6 +96,11 @@ import androidx.media3.ui.PlayerView;
 public class MainActivity extends AppCompatActivity {
 
     private static final String BASE = "https://aniworld.to";
+    private static final String UPDATE_METADATA_URL =
+            "https://api.github.com/repos/AquatoJL/AniWorld-Android-App/contents/app-release.apk?ref=main";
+    private static final int REQUEST_INSTALL_PERMISSION = 7101;
+    private static final int REQUEST_INSTALL_APK = 7102;
+    private static final long MAX_UPDATE_APK_SIZE = 250L * 1024L * 1024L;
 
     private static final int ORANGE = 0xFFF47521;
     private static final int CARD_BACKGROUND = 0xFF1C1C1C;
@@ -105,6 +117,9 @@ public class MainActivity extends AppCompatActivity {
     private static final long SEEK_DOUBLE = 70_000;
 
     private final ExecutorService io =
+            Executors.newSingleThreadExecutor();
+
+    private final ExecutorService updateExecutor =
             Executors.newSingleThreadExecutor();
 
     private final ThreadPoolExecutor imageExecutor =
@@ -155,6 +170,7 @@ public class MainActivity extends AppCompatActivity {
 
     private Show selectedAnime;
     private Show selectedSeason;
+    private Show selectedEpisode;
 
     private String currentEpisodeId = null;
     private boolean currentEpisodeMarked = false;
@@ -517,6 +533,9 @@ public class MainActivity extends AppCompatActivity {
                         if (player.getVisibility() == View.VISIBLE
                                 || nativePlayerView.getVisibility() == View.VISIBLE) {
                             showCatalog();
+                            if (level == 3 && selectedEpisode != null) {
+                                openEpisode(selectedEpisode);
+                            }
                             return;
                         }
 
@@ -771,6 +790,342 @@ public class MainActivity extends AppCompatActivity {
         });
 
         loadCatalog(BASE + "/", "Start");
+        checkForAppUpdate();
+    }
+
+    // ---------------------------------------------------------
+    // APP UPDATES
+    // ---------------------------------------------------------
+
+    private void checkForAppUpdate() {
+        updateExecutor.execute(() -> {
+            File updateFile = null;
+
+            try {
+                JSONObject metadata = requestUpdateMetadata();
+                String remoteSha = metadata.optString("sha", "");
+                String downloadUrl = metadata.optString("download_url", "");
+                long expectedSize = metadata.optLong("size", -1);
+
+                if (remoteSha.isEmpty()
+                        || expectedSize <= 0
+                        || expectedSize > MAX_UPDATE_APK_SIZE
+                        || !isTrustedUpdateUrl(downloadUrl)) {
+                    throw new IOException("Ungültige GitHub-Update-Metadaten");
+                }
+
+                SharedPreferences preferences =
+                        getSharedPreferences("app_update", MODE_PRIVATE);
+                if (remoteSha.equals(
+                        preferences.getString("last_checked_sha", "")
+                )) {
+                    return;
+                }
+
+                File updateDirectory = new File(getCacheDir(), "updates");
+                if (!updateDirectory.exists() && !updateDirectory.mkdirs()) {
+                    throw new IOException("Update-Ordner konnte nicht erstellt werden");
+                }
+
+                updateFile = new File(updateDirectory, "aniworld-update.apk");
+                downloadUpdateApk(downloadUrl, updateFile, expectedSize);
+
+                if (!remoteSha.equalsIgnoreCase(computeGitHubBlobSha1(updateFile))) {
+                    throw new IOException("Die heruntergeladene APK stimmt nicht mit GitHub überein");
+                }
+
+                PackageManager packageManager = getPackageManager();
+                int packageFlags = PackageManager.GET_SIGNING_CERTIFICATES;
+                PackageInfo remotePackage = packageManager.getPackageArchiveInfo(
+                        updateFile.getAbsolutePath(),
+                        packageFlags
+                );
+                PackageInfo installedPackage = packageManager.getPackageInfo(
+                        getPackageName(),
+                        packageFlags
+                );
+
+                if (remotePackage == null
+                        || !getPackageName().equals(remotePackage.packageName)) {
+                    throw new IOException("Die APK gehört nicht zu AniWorld");
+                }
+
+                if (remotePackage.getLongVersionCode()
+                        <= installedPackage.getLongVersionCode()) {
+                    preferences.edit()
+                            .putString("last_checked_sha", remoteSha)
+                            .apply();
+                    updateFile.delete();
+                    return;
+                }
+
+                Set<String> remoteCertificates =
+                        getSigningCertificateIds(remotePackage);
+                Set<String> installedCertificates =
+                        getSigningCertificateIds(installedPackage);
+                if (remoteCertificates.isEmpty()
+                        || installedCertificates.isEmpty()
+                        || !remoteCertificates.equals(installedCertificates)) {
+                    preferences.edit()
+                            .putString("last_checked_sha", remoteSha)
+                            .apply();
+                    updateFile.delete();
+                    runOnUiThread(() -> Toast.makeText(
+                            MainActivity.this,
+                            "Das Update ist mit einem anderen Schlüssel signiert.",
+                            Toast.LENGTH_LONG
+                    ).show());
+                    return;
+                }
+
+                File verifiedUpdateFile = updateFile;
+                runOnUiThread(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "Update verfügbar – Installation wird gestartet.",
+                                Toast.LENGTH_SHORT
+                        ).show();
+                        installDownloadedUpdate(verifiedUpdateFile);
+                    }
+                });
+            } catch (Exception e) {
+                if (updateFile != null && updateFile.exists()) {
+                    updateFile.delete();
+                }
+                Log.w("AniWorldUpdate", "Update-Prüfung fehlgeschlagen", e);
+            }
+        });
+    }
+
+    private JSONObject requestUpdateMetadata() throws Exception {
+        HttpURLConnection connection =
+                (HttpURLConnection) new URL(UPDATE_METADATA_URL).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setConnectTimeout(15000);
+        connection.setReadTimeout(20000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("Accept", "application/vnd.github+json");
+        connection.setRequestProperty("User-Agent", "AniWorld-Android-App");
+
+        try {
+            int responseCode = connection.getResponseCode();
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                throw new IOException("GitHub antwortete mit HTTP " + responseCode);
+            }
+
+            try (InputStream input = connection.getInputStream();
+                 java.io.ByteArrayOutputStream output =
+                         new java.io.ByteArrayOutputStream()) {
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    output.write(buffer, 0, count);
+                    if (output.size() > 1024 * 1024) {
+                        throw new IOException("GitHub-Metadaten sind zu groß");
+                    }
+                }
+                return new JSONObject(
+                        new String(output.toByteArray(), java.nio.charset.StandardCharsets.UTF_8)
+                );
+            }
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private boolean isTrustedUpdateUrl(String value) {
+        try {
+            URL url = new URL(value);
+            return "https".equalsIgnoreCase(url.getProtocol())
+                    && "raw.githubusercontent.com".equalsIgnoreCase(url.getHost());
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void downloadUpdateApk(
+            String downloadUrl,
+            File destination,
+            long expectedSize
+    ) throws Exception {
+        File temporaryFile = new File(
+                destination.getParentFile(),
+                destination.getName() + ".part"
+        );
+        HttpURLConnection connection =
+                (HttpURLConnection) new URL(downloadUrl).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(45000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", "AniWorld-Android-App");
+
+        try {
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                throw new IOException(
+                        "APK-Download fehlgeschlagen: HTTP "
+                                + connection.getResponseCode()
+                );
+            }
+
+            long downloadedBytes = 0;
+            try (InputStream input = connection.getInputStream();
+                 FileOutputStream output = new FileOutputStream(temporaryFile)) {
+                byte[] buffer = new byte[64 * 1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    downloadedBytes += count;
+                    if (downloadedBytes > MAX_UPDATE_APK_SIZE
+                            || downloadedBytes > expectedSize) {
+                        throw new IOException("APK ist größer als erwartet");
+                    }
+                    output.write(buffer, 0, count);
+                }
+                output.getFD().sync();
+            }
+
+            if (downloadedBytes != expectedSize) {
+                throw new IOException("APK-Download ist unvollständig");
+            }
+
+            if (destination.exists() && !destination.delete()) {
+                throw new IOException("Alte Update-Datei konnte nicht entfernt werden");
+            }
+            if (!temporaryFile.renameTo(destination)) {
+                throw new IOException("Update-Datei konnte nicht gespeichert werden");
+            }
+        } finally {
+            connection.disconnect();
+            if (temporaryFile.exists()) {
+                temporaryFile.delete();
+            }
+        }
+    }
+
+    private String computeGitHubBlobSha1(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-1");
+        digest.update(
+                ("blob " + file.length() + "\0")
+                        .getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+        );
+
+        try (InputStream input = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, count);
+            }
+        }
+
+        byte[] hash = digest.digest();
+        StringBuilder result = new StringBuilder(hash.length * 2);
+        for (byte value : hash) {
+            result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        }
+        return result.toString();
+    }
+
+    private Set<String> getSigningCertificateIds(PackageInfo packageInfo)
+            throws Exception {
+        Set<String> certificateIds = new HashSet<>();
+        if (packageInfo.signingInfo == null) {
+            return certificateIds;
+        }
+
+        Signature[] signatures = packageInfo.signingInfo.getApkContentsSigners();
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        for (Signature signature : signatures) {
+            byte[] hash = digest.digest(signature.toByteArray());
+            StringBuilder id = new StringBuilder(hash.length * 2);
+            for (byte value : hash) {
+                id.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+            }
+            certificateIds.add(id.toString());
+        }
+        return certificateIds;
+    }
+
+    private void installDownloadedUpdate(File apkFile) {
+        if (android.os.Build.VERSION.SDK_INT >= 26
+                && !getPackageManager().canRequestPackageInstalls()) {
+            getSharedPreferences("app_update", MODE_PRIVATE)
+                    .edit()
+                    .putString("pending_apk", apkFile.getAbsolutePath())
+                    .apply();
+
+            Intent settingsIntent = new Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())
+            );
+            try {
+                startActivityForResult(
+                        settingsIntent,
+                        REQUEST_INSTALL_PERMISSION
+                );
+            } catch (Exception e) {
+                Log.e("AniWorldUpdate", "Installations-Einstellungen nicht verfügbar", e);
+                Toast.makeText(
+                        this,
+                        "Installation unbekannter Apps für AniWorld erlauben.",
+                        Toast.LENGTH_LONG
+                ).show();
+            }
+            return;
+        }
+
+        launchPackageInstaller(apkFile);
+    }
+
+    private void launchPackageInstaller(File apkFile) {
+        try {
+            Uri apkUri = FileProvider.getUriForFile(
+                    this,
+                    getPackageName() + ".fileprovider",
+                    apkFile
+            );
+            Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+            installIntent.setDataAndType(
+                    apkUri,
+                    "application/vnd.android.package-archive"
+            );
+            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+            startActivityForResult(installIntent, REQUEST_INSTALL_APK);
+        } catch (Exception e) {
+            Log.e("AniWorldUpdate", "APK-Installation konnte nicht gestartet werden", e);
+            Toast.makeText(
+                    this,
+                    "Das Update konnte nicht geöffnet werden.",
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode != REQUEST_INSTALL_PERMISSION) {
+            return;
+        }
+
+        SharedPreferences preferences =
+                getSharedPreferences("app_update", MODE_PRIVATE);
+        String pendingPath = preferences.getString("pending_apk", "");
+        preferences.edit().remove("pending_apk").apply();
+
+        if (android.os.Build.VERSION.SDK_INT >= 26
+                && getPackageManager().canRequestPackageInstalls()
+                && !pendingPath.isEmpty()) {
+            launchPackageInstaller(new File(pendingPath));
+        } else {
+            Toast.makeText(
+                    this,
+                    "AniWorld darf keine Updates installieren.",
+                    Toast.LENGTH_LONG
+            ).show();
+        }
     }
 
     // ---------------------------------------------------------
@@ -2981,6 +3336,7 @@ public class MainActivity extends AppCompatActivity {
         cancelPosterBatch();
 
         selectedSeason = season;
+        selectedEpisode = null;
         level = 2;
         sectionTitle.setText(season.title);
         catalog.removeAllViews();
@@ -3295,6 +3651,7 @@ public class MainActivity extends AppCompatActivity {
 
         currentEpisodeId = null;
         currentEpisodeMarked = false;
+        selectedEpisode = episode;
 
         level = 3;
 
@@ -4469,6 +4826,7 @@ public class MainActivity extends AppCompatActivity {
         cancelEpisodeWatchTimer();
 
         io.shutdownNow();
+        updateExecutor.shutdownNow();
         cancelPosterBatch();
         imageExecutor.shutdownNow();
 
