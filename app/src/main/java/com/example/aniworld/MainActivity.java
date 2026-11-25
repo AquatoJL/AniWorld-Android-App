@@ -1489,7 +1489,7 @@ public class MainActivity extends AppCompatActivity {
             menu.setOnMenuItemClickListener(item -> {
                 switch (item.getItemId()) {
                     case 1:
-                        openPlayer(BASE);
+                        openPlayer(BASE + "/account");
                         return true;
                     case 2:
                         checkForAppUpdate(true);
